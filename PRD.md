@@ -198,17 +198,22 @@ This is a heuristic approach (not semantic/embedding-based) to keep it fast and 
 
 **How it works:**
 
-1. Fetch content using the optimal strategy (from route cache)
-2. Extract and clean to Markdown
-3. Compute SHA-256 hash
-4. Compare with stored hash for this URL
-5. If unchanged → signal to agent, return cached content
-6. If changed → update cache, return new content with "changed: true" flag
+1. **Check cache first** — Look up URL in content cache. If entry exists and TTL not expired:
+   - Compute expected SHA-256 from stored metadata
+   - If cached content is available → return it immediately with `{from_cache: true, age_seconds: N}`
+   - If only hash is stored (entry too large for content cache) → proceed to fetch, then compare hashes
+2. **Fetch content** using the optimal strategy (from route cache)
+3. **Extract and clean** to Markdown
+4. **Compute SHA-256 hash** of extracted content
+5. **Compare** with stored hash for this URL (if any)
+   - If unchanged → update last_accessed timestamp, return cached content with `{changed: false}`
+   - If changed → update cache, return new content with `{changed: true, previous_hash: "..."}`
+6. **Store in cache** if content size < max_entry_size and cache is enabled
 
 **Cache Configuration:**
 
 ```
-Cache settings (configurable via environment variables with `KAELO_` prefix, or TOML config file):
+Cache settings (configurable via environment variables with `KAELO_` prefix. TOML config file support is planned post-MVP):
 ```
 # Environment variables
 KAELO_CACHE_ENABLED=true         # Master switch
@@ -349,7 +354,8 @@ Kaelo is the **only tool in the "local + intelligent" quadrant.**
 ### Dependencies (principles)
 
 - Minimize external dependencies
-- No runtime requiring Node.js, Python, or Bun
+- Kaelo itself requires only Rust — no Node.js, Python, or Bun runtime
+- Optional dependencies (not required for core fetch): Chromium for headless browser, SearXNG for search (Python-based, user-managed)
 - Single static binary for macOS (Apple Silicon + Intel), Linux (x86_64 + ARM64)
 - Optional: Windows support
 
@@ -379,7 +385,7 @@ These are explicitly OUT of scope:
 - **Building a search engine index** — Kaelo fetches and searches, it does not index
 - **Replacing webclaw/crw** — Kaelo is a different category of tool (router, not scraper)
 - **Headless browser management** — Kaelo uses chromiumoxide but doesn't manage Chrome installs
-- **CAPTCHA solving** — Kaelo works around CAPTCHAs, it doesn't solve them
+- **CAPTCHA solving** — Kaelo cannot solve CAPTCHAs. When a CAPTCHA is detected, it fails gracefully and reports the blockage to the agent. It does not attempt to bypass CAPTCHA challenges.
 - **Proxy/VPN management** — Out of scope for v1
 - **Multi-user/server mode** — Kaelo is a single-user local tool
 - **Web dashboard/UI** — CLI and MCP only
@@ -493,4 +499,4 @@ These need to be resolved before implementation:
 
 ---
 
-*Document version: 1.1 — Oracle-reviewed, fixes applied on 2026-05-13*
+*Document version: 1.2 — Second Oracle review, fixes applied on 2026-05-13*

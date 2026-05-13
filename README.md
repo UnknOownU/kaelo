@@ -21,7 +21,7 @@ Second visit to reddit.com:  1.5s  (uses known-good strategy)
 | Sites block AI agents | Multi-strategy fetching: HTTP → TLS impersonation → headless browser |
 | Every request re-learns from scratch | Route cache remembers what works per domain |
 | Agents waste tokens on bloated content | Token-aware extraction: budgets, dedup, targeted extraction |
-| Existing tools are AGPL or paid | MIT licensed, 100% local, zero API keys |
+| Existing tools are AGPL or paid | MIT licensed, local-first, zero API keys for fetch |
 
 ## How it works
 
@@ -83,13 +83,20 @@ That's it. Kaelo auto-starts with your agent session.
 
 ## MCP Tools
 
+**Available in MVP (v0.1):**
+
 | Tool | Description | Key Parameters |
 |---|---|---|
 | `web_fetch` | Fetch a URL, return clean Markdown | url, token_budget, focus, no_cache |
-| `web_search` | Search the web, return results | query, max_results, fetch_content |
-| `web_extract` | Fetch and extract targeted content | url, query, token_budget |
 | `cache_status` | Show cache statistics | — |
 | `cache_clear` | Clear cache entries | domain, older_than, strategies |
+
+**Planned (post-MVP):**
+
+| Tool | Description | Key Parameters |
+|---|---|---|
+| `web_search` | Search the web, return results | query, max_results, fetch_content |
+| `web_extract` | Fetch and extract targeted content | url, query, token_budget |
 
 ## Cache Management
 
