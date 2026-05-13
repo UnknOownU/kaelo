@@ -101,10 +101,10 @@ kaelo cache clear --older-than 24h  # Clear old entries
 Via environment variables or config file:
 
 ```
-KAelo_CACHE_ENABLED=true        # Master cache switch
-KAelo_CACHE_MAX_SIZE=52428800   # 50 MB hard limit
-KAelo_CACHE_TTL=3600            # 1 hour default TTL
-KAelo_CACHE_COMPRESSION=gzip    # Compress cached content
+KAELO_CACHE_ENABLED=true        # Master cache switch
+KAELO_CACHE_MAX_SIZE=52428800   # 50 MB hard limit
+KAELO_CACHE_TTL=3600            # 1 hour default TTL
+KAELO_CACHE_COMPRESSION=gzip    # Compress cached content
 ```
 
 ## Competitive Landscape
