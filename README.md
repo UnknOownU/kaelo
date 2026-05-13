@@ -63,9 +63,11 @@ Agent requests URL
 ```bash
 # Install (when available)
 cargo install kaelo
+```
 
-# Add to OpenCode
-# In opencode.json:
+Add to your OpenCode config (`opencode.json`):
+
+```jsonc
 {
   "mcp": {
     "kaelo": {
@@ -75,17 +77,19 @@ cargo install kaelo
     }
   }
 }
-
-# That's it. Kaelo auto-starts with your agent session.
 ```
+
+That's it. Kaelo auto-starts with your agent session.
 
 ## MCP Tools
 
-| Tool | Description |
-|---|---|
-| `web_fetch(url, options)` | Fetch a URL, return clean Markdown |
-| `web_search(query)` | Search the web, return results |
-| `web_extract(url, query)` | Fetch and extract targeted content |
+| Tool | Description | Key Parameters |
+|---|---|---|
+| `web_fetch` | Fetch a URL, return clean Markdown | url, token_budget, focus, no_cache |
+| `web_search` | Search the web, return results | query, max_results, fetch_content |
+| `web_extract` | Fetch and extract targeted content | url, query, token_budget |
+| `cache_status` | Show cache statistics | — |
+| `cache_clear` | Clear cache entries | domain, older_than, strategies |
 
 ## Cache Management
 

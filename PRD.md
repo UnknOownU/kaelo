@@ -44,7 +44,7 @@ Current solutions are either:
 
 ### Secondary
 
-- **Security researchers** — need to access web content behind protections
+- **Security researchers** — legitimate web content access through anti-bot protections
 - **Data engineers** — lightweight local web content extraction
 - **Privacy-conscious users** — want web content without sending data to cloud services
 
@@ -138,25 +138,28 @@ The heart of Kaelo. Every URL request passes through the router.
 
 **Behavior:**
 
-1. **Known domain** → Look up the route cache. Use the strategy with the highest success rate. Skip probing.
-2. **Unknown domain** → Execute a lightweight probe (HTTP HEAD with standard headers). Based on the response (status, headers, WAF fingerprints), select a strategy. If it fails, escalate to the next strategy.
-3. **Store results** → After each request, update the route cache: strategy used, latency, success/failure.
+1. **Known domain** → Look up the route cache. Among all stored strategies for this domain, pick the one with the highest success rate. Skip probing.
+2. **Unknown domain** → Execute a lightweight probe (HTTP GET with `Range: bytes=0-1024` header). Many sites reject HEAD requests, so a ranged GET is more reliable. Based on the response (status, headers, WAF fingerprints), select a strategy. If it fails, escalate to the next strategy.
+3. **Store results** → After each request, update the route cache: strategy used, latency, success/failure. Multiple strategies can be stored per domain, each with their own stats.
 
 **Route Cache Schema:**
 
 ```
 Table: domain_strategies
-- domain (TEXT, PRIMARY KEY)
-- strategy (TEXT)           -- "http_simple", "tls_chrome", "tls_mobile", "headless", "public_api"
+- domain (TEXT)              -- e.g. "reddit.com"
+- strategy (TEXT)            -- "http_simple", "tls_chrome", "tls_mobile", "headless", "public_api"
 - avg_latency_ms (INTEGER)
-- success_rate (REAL)       -- 0.0 to 1.0
+- success_rate (REAL)        -- 0.0 to 1.0
 - total_requests (INTEGER)
 - last_success_at (TIMESTAMP)
 - last_check_at (TIMESTAMP)
-- extra_headers (TEXT)      -- JSON: custom headers that worked
+- extra_headers (TEXT)       -- JSON: custom headers that worked
+PRIMARY KEY: (domain, strategy)   -- Composite key: multiple strategies per domain
 ```
 
-**Eviction:** Domains not accessed in 30 days are pruned. Manual clear available.
+**Strategy Selection:** When multiple strategies exist for a domain, Kaelo selects the one with the best balance of `success_rate` and `avg_latency_ms`. If the top strategy fails, it falls back to the next best. All attempts update the stats.
+
+**Eviction:** Domains not accessed in 30 days are pruned. Individual strategies with `success_rate < 0.2` after 10+ attempts are removed. Manual clear available.
 
 **Cold Start:** On first launch, Kaelo has zero knowledge. It builds its route cache organically from actual requests. No hardcoded domain lists.
 
@@ -181,6 +184,14 @@ The agent can pass a `query` or `focus` parameter. Kaelo uses this to prioritize
 - If fetching a documentation page with focus="authentication" → extract sections about auth, skip the rest
 - If fetching a GitHub repo with focus="installation" → prioritize README installation section
 
+**How it works (section-based heuristic):**
+1. Parse the HTML into a section tree (headings → content blocks)
+2. Score each section based on keyword overlap with the focus parameter
+3. Return sections sorted by relevance score, within the token budget
+4. If no focus is specified, return the full extracted content (standard behavior)
+
+This is a heuristic approach (not semantic/embedding-based) to keep it fast and dependency-free. Post-MVP could add semantic ranking via local embeddings.
+
 ### 4.3 Content Cache
 
 **Purpose:** Avoid re-fetching unchanged content.
@@ -197,20 +208,25 @@ The agent can pass a `query` or `focus` parameter. Kaelo uses this to prioritize
 **Cache Configuration:**
 
 ```
-Cache settings (configurable via env vars or config file):
-- cache.enabled: true              -- Master switch
-- cache.max_size: 52428800         -- 50 MB hard limit
-- cache.max_entry_size: 102400     -- Don't cache entries > 100 KB
-- cache.ttl: 3600                  -- Default TTL: 1 hour
-- cache.compression: gzip          -- Compress stored content
-- cache.eviction: lru              -- Evict least recently used when full
+Cache settings (configurable via environment variables with `KAELO_` prefix, or TOML config file):
+```
+# Environment variables
+KAELO_CACHE_ENABLED=true         # Master switch
+KAELO_CACHE_MAX_SIZE=52428800    # 50 MB hard limit (in bytes)
+KAELO_CACHE_MAX_ENTRY=102400     # Don't cache entries > 100 KB (in bytes)
+KAELO_CACHE_TTL=3600             # Default TTL: 1 hour (in seconds)
+KAELO_CACHE_COMPRESSION=gzip     # Compress stored content
+KAELO_CACHE_EVICTION=lru         # Evict least recently used when full
+```
 ```
 
 **Actual disk usage with gzip compression:**
 
-| Scenario | Raw content | Compressed | 500 pages |
-|---|---|---|---|
-| Average article | ~100 KB | ~25 KB | ~12 MB |
+| Scenario | Raw content | Compressed | 500 pages | Calculation basis |
+|---|---|---|---|---|
+| Average article | ~100 KB | ~25 KB | ~12 MB | Typical gzip ratio: 70-80% reduction on HTML/text |
+
+Note: Compression ratio varies by content type. Technical documentation compresses better (~80%) than prose-heavy articles (~70%). These are conservative estimates.
 
 **Automatic eviction:**
 - LRU when cache exceeds max_size
@@ -229,12 +245,12 @@ kaelo cache clear --strategies      -- Reset route cache (keep content cache)
 
 **Cache paranoia levels:**
 
-| Level | Config | Max disk usage |
-|---|---|---|
-| Parano | cache.enabled: false | ~5 MB (route cache only) |
-| Light | max_size: 10MB | ~3 MB |
-| Normal | max_size: 50MB | ~12 MB |
-| Heavy | max_size: 200MB | ~50 MB |
+| Level | KAELO_CACHE_MAX_SIZE | KAELO_CACHE_ENABLED | Max disk usage | Notes |
+|---|---|---|---|---|
+| Parano | — | false | ~5 MB | Route cache only, no content cache |
+| Light | 10485760 (10 MB) | true | ~3 MB | Short TTL recommended |
+| Normal | 52428800 (50 MB) | true | ~12 MB | Default, good balance |
+| Heavy | 209715200 (200 MB) | true | ~50 MB | Long-running sessions |
 
 ### 4.4 Search
 
@@ -307,7 +323,7 @@ Kaelo exposes these MCP tools via stdio transport:
    INTELLIGENT         │                                  │
    ROUTING             │                                  │
                       │                                  │
-              ★ KAelo ★│                                  │
+               ★ Kaelo ★ │                                  │
                       │                                  │
 ```
 
@@ -344,12 +360,15 @@ Kaelo is the **only tool in the "local + intelligent" quadrant.**
 - Two tables: `domain_strategies` (route cache), `url_cache` (content cache)
 - All content cache entries gzip-compressed
 
-### No External Services Required
+### External Services
 
-- Kaelo must work **completely offline** for fetch operations (assuming the URL is accessible)
-- Search requires internet (obviously) but uses free sources (SearXNG or DuckDuckGo)
-- No API keys needed for core functionality
-- Optional: user can configure API keys for enhanced search (Brave, etc.)
+- **Fetch operations** work without any external service — just Kaelo, the backends, and the target URL
+- **Search operations** require internet access. Search backends:
+  - **SearXNG** (preferred): Self-hosted, zero API key, full privacy. User must install separately.
+  - **DuckDuckGo HTML** (fallback): No API key needed, but HTML parsing is fragile and subject to rate limiting
+- **No API keys needed** for core fetch and search functionality
+- **Optional:** User can configure API keys for enhanced search (Brave Search API, etc.)
+- **Headless browser** requires a Chromium-based browser installed on the system. If absent, Kaelo degrades gracefully to HTTP + TLS backends only.
 
 ---
 
@@ -474,4 +493,4 @@ These need to be resolved before implementation:
 
 ---
 
-*Document version: 1.0 — Generated from brainstorming session on 2026-05-13*
+*Document version: 1.1 — Oracle-reviewed, fixes applied on 2026-05-13*
