@@ -112,7 +112,6 @@ fn extract_domain(url: &str) -> Result<String> {
     Ok(domain.to_string())
 }
 
-/// Map a strategy name string back to the `Strategy` enum.
 fn parse_strategy(name: &str) -> Result<Strategy> {
     match name {
         "HttpSimple" => Ok(Strategy::HttpSimple),
@@ -128,10 +127,6 @@ fn parse_strategy(name: &str) -> Result<Strategy> {
 fn compute_score(success_rate: f64, avg_latency_ms: u64) -> f64 {
     success_rate * (1.0 / (avg_latency_ms as f64 / 1000.0).max(0.001))
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 #[allow(clippy::arc_with_non_send_sync)]
@@ -161,13 +156,10 @@ mod tests {
             .expect("upsert should succeed");
     }
 
-    // ---- resolve ----
-
     #[test]
     fn test_resolve_known_domain() {
         let storage = Arc::new(Storage::open(":memory:").unwrap());
         seed_strategy(&storage, "reddit.com", "TlsMobile", 1500, true);
-        // Second success to push rate to 1.0
         seed_strategy(&storage, "reddit.com", "TlsMobile", 1200, true);
 
         let router = Router::new(Arc::clone(&storage));
@@ -210,8 +202,6 @@ mod tests {
         }
     }
 
-    // ---- extract_domain ----
-
     #[test]
     fn test_extract_domain_various() {
         assert_eq!(
@@ -233,8 +223,6 @@ mod tests {
         assert!(extract_domain("ftp://example.com").is_err());
     }
 
-    // ---- parse_strategy ----
-
     #[test]
     fn test_parse_strategy_variants() {
         assert_eq!(parse_strategy("HttpSimple").unwrap(), Strategy::HttpSimple);
@@ -244,8 +232,6 @@ mod tests {
         assert_eq!(parse_strategy("PublicApi").unwrap(), Strategy::PublicApi);
         assert!(parse_strategy("Unknown").is_err());
     }
-
-    // ---- record_outcome ----
 
     #[test]
     fn test_record_outcome_success() {
@@ -289,8 +275,6 @@ mod tests {
         assert_eq!(best.total_requests, 2);
     }
 
-    // ---- scoring ----
-
     #[test]
     fn test_scoring_higher_success_wins() {
         let high = compute_score(1.0, 1000);
@@ -304,8 +288,6 @@ mod tests {
         let slow = compute_score(1.0, 2000);
         assert!(fast > slow);
     }
-
-    // ---- ensure_seeded ----
 
     #[test]
     fn test_ensure_seeded_first_time() {

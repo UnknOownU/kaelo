@@ -85,7 +85,7 @@ pub(crate) fn parse_sections(markdown: &str) -> Vec<Section> {
         current_content.push_str(line);
     }
 
-    // Flush the last section.
+    // Flush final section
     if !current_heading.is_empty() || !current_content.is_empty() {
         sections.push(Section {
             heading: current_heading,
@@ -98,12 +98,7 @@ pub(crate) fn parse_sections(markdown: &str) -> Vec<Section> {
     sections
 }
 
-/// Compute relevance score for a section given focus keywords.
-///
-/// Scoring components:
-/// - **Keyword ratio**: fraction of focus keywords present in the section.
-/// - **Heading bonus**: heading matches are weighted 2× relative to body matches.
-/// - **Length factor**: small logarithmic bonus for longer content (log2(len)/10).
+/// Compute relevance score: keyword ratio + heading bonus + length factor.
 fn compute_relevance(section: &Section, keywords: &[String]) -> f64 {
     if keywords.is_empty() {
         return 0.0;

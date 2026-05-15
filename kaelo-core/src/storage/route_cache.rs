@@ -5,10 +5,6 @@ use anyhow::{Context, Result};
 
 use super::Storage;
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct CachedStrategy {
     pub domain: String,
@@ -27,17 +23,9 @@ pub struct FetchResult {
     pub headers: Option<HashMap<String, String>>,
 }
 
-// ---------------------------------------------------------------------------
-// Score (computed on read, never stored)
-// ---------------------------------------------------------------------------
-
 fn score(success_rate: f64, avg_latency_ms: u64) -> f64 {
     success_rate * (1.0 / (avg_latency_ms as f64 / 1000.0).max(0.001))
 }
-
-// ---------------------------------------------------------------------------
-// RouteCache
-// ---------------------------------------------------------------------------
 
 pub struct RouteCache<'a> {
     storage: &'a Storage,
@@ -48,7 +36,6 @@ impl<'a> RouteCache<'a> {
         Self { storage }
     }
 
-    /// Return all cached strategies for `domain`, sorted by score descending.
     pub fn get_strategies(&self, domain: &str) -> Result<Vec<CachedStrategy>> {
         let conn = self.storage.conn();
         let mut stmt = conn.prepare(
@@ -83,7 +70,6 @@ impl<'a> RouteCache<'a> {
         Ok(sorted)
     }
 
-    /// Return the single best strategy for `domain` (highest score).
     pub fn get_best_strategy(&self, domain: &str) -> Result<Option<CachedStrategy>> {
         let strategies = self.get_strategies(domain)?;
         Ok(strategies.into_iter().next())
@@ -100,7 +86,6 @@ impl<'a> RouteCache<'a> {
         let conn = self.storage.conn();
         let now = now_iso();
 
-        // Check if the row already exists.
         let existing: Option<(u64, f64, u32)> = conn
             .prepare(
                 "SELECT avg_latency_ms, success_rate, total_requests
@@ -188,7 +173,6 @@ impl<'a> RouteCache<'a> {
         Ok(())
     }
 
-    /// Delete a specific (domain, strategy) entry.
     pub fn remove_strategy(&self, domain: &str, strategy: &str) -> Result<()> {
         let conn = self.storage.conn();
         conn.execute(
@@ -199,13 +183,6 @@ impl<'a> RouteCache<'a> {
     }
 
     /// Evict entries that are old AND under-performing.
-    ///
-    /// A row is evicted when **all** of the following hold:
-    /// - `total_requests >= min_requests`
-    /// - `success_rate < min_success_rate`
-    /// - `last_check_at < (now - max_age_days)`
-    ///
-    /// Returns the number of deleted rows.
     pub fn evict_stale(
         &self,
         max_age_days: u32,
@@ -226,7 +203,6 @@ impl<'a> RouteCache<'a> {
         Ok(deleted as u64)
     }
 
-    /// Return all distinct domains that have at least one cached strategy.
     pub fn get_all_domains(&self) -> Result<Vec<String>> {
         let conn = self.storage.conn();
         let mut stmt = conn.prepare("SELECT DISTINCT domain FROM domain_strategies")?;
@@ -236,7 +212,6 @@ impl<'a> RouteCache<'a> {
         Ok(domains)
     }
 
-    /// Total number of rows in `domain_strategies`.
     pub fn count_entries(&self) -> Result<u64> {
         let conn = self.storage.conn();
         let count: u64 = conn.query_row("SELECT COUNT(*) FROM domain_strategies", [], |row| {
@@ -319,7 +294,6 @@ impl<'a> RouteCache<'a> {
 
         let mut count: u64 = 0;
         for entry in &entries {
-            // Write directly to bypass running-average — import sets absolute values.
             let conn = self.storage.conn();
             conn.execute(
                 "INSERT OR REPLACE INTO domain_strategies
@@ -379,23 +353,16 @@ impl<'a> RouteCache<'a> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Running average for integer latency values.
 fn running_avg(prev_avg: u64, prev_count: u32, new_val: u64) -> u64 {
     let n = prev_count as u64;
     ((prev_avg * n) + new_val) / (n + 1)
 }
 
-/// Running average for float success-rate values.
 fn running_avg_f64(prev_avg: f64, prev_count: u32, new_val: f64) -> f64 {
     let n = prev_count as f64;
     (prev_avg * n + new_val) / (n + 1.0)
 }
 
-/// ISO-8601 timestamp for "now".
 fn now_iso() -> String {
     let now = std::time::SystemTime::now();
     let duration = now
@@ -404,7 +371,6 @@ fn now_iso() -> String {
     chrono_less_iso(duration.as_secs() as i64)
 }
 
-/// ISO-8601 timestamp for `now - days`.
 fn now_iso_minus_days(days: u32) -> String {
     let secs_in_day: u64 = 86_400;
     let now = std::time::SystemTime::now();
@@ -415,10 +381,7 @@ fn now_iso_minus_days(days: u32) -> String {
     chrono_less_iso(past as i64)
 }
 
-/// Minimal ISO-8601 formatter that avoids pulling in chrono.
-/// Produces "YYYY-MM-DDTHH:MM:SSZ" (approximate, no leap-second awareness).
 fn chrono_less_iso(unix_secs: i64) -> String {
-    // Days up to the start of each month in a non-leap year.
     const CUM_DAYS: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
 
     let mut secs = unix_secs;
@@ -429,8 +392,6 @@ fn chrono_less_iso(unix_secs: i64) -> String {
         days -= 1;
     }
 
-    // Shift from 1970-01-01 epoch to a day-count.
-    // 1970-01-01 = day 0. We'll compute year/month/day.
     let mut year = 1970;
     let mut remaining = days;
 
@@ -480,10 +441,6 @@ fn chrono_less_iso(unix_secs: i64) -> String {
 fn is_leap(y: i64) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
-
-// ===========================================================================
-// Tests
-// ===========================================================================
 
 #[cfg(test)]
 mod tests {
@@ -556,12 +513,10 @@ mod tests {
         let storage = make_storage();
         let cache = RouteCache::new(&storage);
 
-        // Insert.
         cache
             .upsert_strategy("example.com", "HttpSimple", &ok_result(100))
             .unwrap();
 
-        // Upsert again.
         cache
             .upsert_strategy("example.com", "HttpSimple", &ok_result(200))
             .unwrap();
@@ -591,7 +546,6 @@ mod tests {
         let strategies = cache.get_strategies("example.com").unwrap();
         assert_eq!(strategies.len(), 2);
 
-        // Remove one.
         cache.remove_strategy("example.com", "HttpSimple").unwrap();
         let strategies = cache.get_strategies("example.com").unwrap();
         assert_eq!(strategies.len(), 1);
@@ -603,7 +557,6 @@ mod tests {
         let storage = make_storage();
         let cache = RouteCache::new(&storage);
 
-        // Insert a "stale" entry by directly writing a past last_check_at.
         let conn = storage.conn();
         conn.execute(
             "INSERT INTO domain_strategies
@@ -614,12 +567,10 @@ mod tests {
         )
         .unwrap();
 
-        // Insert a fresh, successful entry.
         cache
             .upsert_strategy("old.com", "GoodStrategy", &ok_result(100))
             .unwrap();
 
-        // Evict: older than 30 days, success_rate < 0.5, min 5 requests.
         let removed = cache.evict_stale(30, 0.5, 5).unwrap();
         assert_eq!(removed, 1);
 
@@ -650,15 +601,12 @@ mod tests {
 
     #[test]
     fn test_score_calculation() {
-        // success_rate=1.0, avg_latency_ms=1000 → 1.0 * (1 / 1.0) = 1.0
         let s1 = score(1.0, 1000);
         assert!((s1 - 1.0).abs() < f64::EPSILON);
 
-        // success_rate=0.5, avg_latency_ms=500 → 0.5 * (1 / 0.5) = 1.0
         let s2 = score(0.5, 500);
         assert!((s2 - 1.0).abs() < f64::EPSILON);
 
-        // success_rate=0.0 → always 0
         let s3 = score(0.0, 1000);
         assert!(s3.abs() < f64::EPSILON);
     }
@@ -716,7 +664,6 @@ mod tests {
         cache.export_json(&path).unwrap();
         assert!(path.exists());
 
-        // Import into a fresh cache.
         let storage2 = make_storage();
         let cache2 = RouteCache::new(&storage2);
         let count = cache2.import_json(&path).unwrap();

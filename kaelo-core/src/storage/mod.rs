@@ -17,7 +17,6 @@ impl Storage {
     /// Use `":memory:"` for in-memory databases (tests).
     pub fn open(path: &str) -> anyhow::Result<Self> {
         let flags = if path == ":memory:" {
-            // In-memory DB: READ_WRITE | CREATE, plus in-memory flag
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_CREATE
                 | OpenFlags::SQLITE_OPEN_MEMORY
@@ -59,7 +58,6 @@ mod tests {
         let storage = Storage::open(":memory:").unwrap();
         let conn = storage.conn();
 
-        // Check domain_strategies table exists
         let has_domain_strategies: bool = conn
             .prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='domain_strategies'")
             .and_then(|mut stmt| {
@@ -72,7 +70,6 @@ mod tests {
             "domain_strategies table should exist"
         );
 
-        // Check url_cache table exists
         let has_url_cache: bool = conn
             .prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='url_cache'")
             .and_then(|mut stmt| stmt.query_row([], |row| row.get::<_, i64>(0)))
@@ -101,7 +98,6 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode, "wal");
 
-        // Cleanup
         drop(storage);
         std::fs::remove_dir_all(dir).ok();
     }
@@ -119,7 +115,6 @@ mod tests {
         let storage2 = Storage::open(&path_str).unwrap();
         drop(storage2);
 
-        // Cleanup
         std::fs::remove_dir_all(dir).ok();
     }
 }

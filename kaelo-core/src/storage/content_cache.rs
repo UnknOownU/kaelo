@@ -530,11 +530,9 @@ mod tests {
 
         let expected_hash = sha256_hex(html.as_bytes());
 
-        // Verify hash via get()
         let cached = cache.get("https://example.com/hash").unwrap().unwrap();
         assert_eq!(cached.content_hash, expected_hash);
 
-        // Verify hash via content_hash()
         let hash = cache.content_hash("https://example.com/hash").unwrap();
         assert_eq!(hash, Some(expected_hash));
     }
@@ -552,13 +550,10 @@ mod tests {
             )
             .unwrap();
 
-        // Should be present immediately
         assert!(cache.get("https://example.com/ttl").unwrap().is_some());
 
-        // Wait for expiry
         thread::sleep(Duration::from_millis(1100));
 
-        // Should be expired now
         assert!(cache.get("https://example.com/ttl").unwrap().is_none());
     }
 
@@ -566,7 +561,6 @@ mod tests {
     fn test_gzip_compression() {
         let cache = make_cache();
 
-        // Typical HTML content — should compress well
         let html = "<html><body>".to_string()
             + &"Lorem ipsum dolor sit amet. ".repeat(500)
             + "</body></html>";
@@ -580,7 +574,6 @@ mod tests {
             )
             .unwrap();
 
-        // Check stored compressed size is smaller than original
         let conn = cache.storage.conn();
         let compressed_size: i64 = conn
             .query_row(
@@ -597,7 +590,6 @@ mod tests {
             html.len(),
         );
 
-        // And get() should return identical content
         let cached = cache.get("https://example.com/compress").unwrap().unwrap();
         assert_eq!(cached.content, html);
     }
@@ -622,7 +614,6 @@ mod tests {
         let stats_before = cache.stats().unwrap();
         assert_eq!(stats_before.entry_count, 10);
 
-        // Evict to ~50% of current size — should remove ~5 oldest entries
         let half_max = stats_before.total_size_bytes / 2;
         let evicted = cache.evict_lru(half_max).unwrap();
         assert!(
@@ -633,7 +624,6 @@ mod tests {
         let stats_after = cache.stats().unwrap();
         assert!(stats_after.entry_count < 10);
 
-        // Oldest entries (page/0, page/1, ...) should be gone
         assert!(cache.get("https://example.com/page/0").unwrap().is_none());
         assert!(cache.get("https://example.com/page/1").unwrap().is_none());
     }
@@ -710,8 +700,6 @@ mod tests {
         let stats = cache.stats().unwrap();
         assert_eq!(stats.entry_count, 3);
         assert!(stats.total_size_bytes > 0);
-
-        // Top domains
         assert!(stats.top_domains.len() >= 2);
         let foo_count = stats
             .top_domains

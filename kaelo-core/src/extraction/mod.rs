@@ -58,7 +58,6 @@ pub fn extract(
         }));
     }
 
-    // Non-HTML binary types: return error suggestion.
     if ct_lower.contains("application/pdf")
         || ct_lower.contains("application/octet-stream")
         || ct_lower.contains("image/")
@@ -77,7 +76,6 @@ pub fn extract(
         }));
     }
 
-    // Default: HTML extraction pipeline.
     extract_html(html, url, content_type)
 }
 

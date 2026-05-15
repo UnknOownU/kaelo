@@ -1,8 +1,3 @@
-//! Curated seed domains with recommended fetch strategies.
-//!
-//! These cover sites known to require specific approaches (Cloudflare, anti-bot,
-//! JS-heavy) so the router can skip probing on first visit.
-
 pub struct SeedDomain {
     pub domain: &'static str,
     pub strategy: &'static str,
@@ -10,7 +5,6 @@ pub struct SeedDomain {
 }
 
 pub const SEED_DOMAINS: &[SeedDomain] = &[
-    // ── Cloudflare-protected / anti-bot sites ─────────────────────────────
     SeedDomain {
         domain: "medium.com",
         strategy: "TlsChrome",
@@ -76,7 +70,6 @@ pub const SEED_DOMAINS: &[SeedDomain] = &[
         strategy: "TlsChrome",
         notes: "Self-protected",
     },
-    // ── Documentation sites (usually open) ───────────────────────────────
     SeedDomain {
         domain: "docs.rs",
         strategy: "HttpSimple",
@@ -132,7 +125,6 @@ pub const SEED_DOMAINS: &[SeedDomain] = &[
         strategy: "HttpSimple",
         notes: "Java docs",
     },
-    // ── News sites ───────────────────────────────────────────────────────
     SeedDomain {
         domain: "bbc.com",
         strategy: "HttpSimple",
@@ -188,7 +180,6 @@ pub const SEED_DOMAINS: &[SeedDomain] = &[
         strategy: "Headless",
         notes: "Paywall, JS-heavy",
     },
-    // ── Code hosting ─────────────────────────────────────────────────────
     SeedDomain {
         domain: "github.com",
         strategy: "HttpSimple",
@@ -219,7 +210,6 @@ pub const SEED_DOMAINS: &[SeedDomain] = &[
         strategy: "HttpSimple",
         notes: "Chinese GitHub mirror",
     },
-    // ── Q&A / Forums ────────────────────────────────────────────────────
     SeedDomain {
         domain: "stackoverflow.com",
         strategy: "HttpSimple",
@@ -255,7 +245,6 @@ pub const SEED_DOMAINS: &[SeedDomain] = &[
         strategy: "PublicApi",
         notes: "HN official domain",
     },
-    // ── Package registries ───────────────────────────────────────────────
     SeedDomain {
         domain: "crates.io",
         strategy: "HttpSimple",

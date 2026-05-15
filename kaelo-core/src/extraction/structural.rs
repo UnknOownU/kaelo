@@ -75,7 +75,6 @@ impl StructuralTracker {
             if let Some(freq) = profile.heading_freq.get(&key) {
                 let ratio = *freq as f64 / profile.pages_observed as f64;
                 if ratio >= STRUCTURAL_RATIO {
-                    // Penalise structural / repeated headings.
                     section.score *= 1.0 - ratio;
                 }
             }

@@ -1,14 +1,9 @@
 //! Token count estimation using a simple character-based heuristic.
-//!
-//! For production tokenization, use tiktoken or a proper tokenizer.
-//! This module provides a fast, dependency-free estimate.
 
 pub struct TokenEstimator;
 
 impl TokenEstimator {
-    /// Estimate token count. Heuristic: text.len() / 4.
-    ///
-    /// Roughly 4 characters per token for English text.
+    /// Estimate token count (≈4 chars per token for English).
     pub fn estimate(text: &str) -> u32 {
         (text.len() as u32) / 4
     }
@@ -27,7 +22,6 @@ impl TokenEstimator {
         // Extract all headings for TOC
         let headings: Vec<&str> = text.lines().filter(|l| l.trim().starts_with('#')).collect();
 
-        // Walk lines, stopping at the first heading that would exceed the budget
         let mut result = String::new();
         let mut last_heading_break = 0usize;
 
@@ -45,12 +39,10 @@ impl TokenEstimator {
             }
         }
 
-        // Safety net: if result is still wildly over budget, cut at last heading
         if result.len() > max_chars * 2 && last_heading_break > 0 {
             result.truncate(last_heading_break);
         }
 
-        // Prepend TOC when we have headings
         if !headings.is_empty() {
             let toc = headings
                 .iter()
@@ -70,22 +62,18 @@ impl TokenEstimator {
             return (text.to_string(), false);
         }
 
-        // Try paragraph boundary
         if let Some(pos) = text[..max_chars].rfind("\n\n") {
             return (text[..pos].to_string(), true);
         }
 
-        // Try sentence boundary
         if let Some(pos) = text[..max_chars].rfind(". ") {
             return (text[..pos + 1].to_string(), true);
         }
 
-        // Try word boundary
         if let Some(pos) = text[..max_chars].rfind(' ') {
             return (text[..pos].to_string(), true);
         }
 
-        // Hard cut
         (text[..max_chars].to_string(), true)
     }
 }

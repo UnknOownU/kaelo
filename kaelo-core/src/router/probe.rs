@@ -5,28 +5,15 @@ use std::time::Duration;
 
 use crate::types::{FetchError, FetchRequest, FetchResponse};
 
-// ---------------------------------------------------------------------------
-// ProbeResult
-// ---------------------------------------------------------------------------
-
-/// Result of probing a domain to determine its accessibility.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProbeResult {
-    /// Domain responds to simple HTTP requests (200, 206, or other non-block status).
     Accessible,
-    /// Domain blocks simple requests — likely needs TLS impersonation or headless.
     Blocked { status: u16 },
-    /// Domain redirected to another URL.
     Redirect { location: String, status: u16 },
-    /// Network / transport error during probe.
     Error { message: String },
 }
 
-// ---------------------------------------------------------------------------
-// Prober trait
-// ---------------------------------------------------------------------------
-
-/// Abstraction over backends that can perform a lightweight probe request.
+/// Lightweight probe request backend.
 ///
 /// Defined in `kaelo-core` so the router can use it without depending on
 /// `kaelo-fetch`. Concrete backends in `kaelo-fetch` implement this trait.
@@ -37,15 +24,6 @@ pub trait Prober: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<FetchResponse, FetchError>> + Send + '_>>;
 }
 
-// ---------------------------------------------------------------------------
-// probe_domain
-// ---------------------------------------------------------------------------
-
-/// Probe a domain using a lightweight Range GET (`bytes=0-0`).
-///
-/// The caller provides anything implementing [`Prober`]. The function builds
-/// a minimal request (Range header, short timeout, no redirect following) and
-/// classifies the response into a [`ProbeResult`].
 pub async fn probe_domain(prober: &dyn Prober, url: &str) -> ProbeResult {
     let mut headers = HashMap::new();
     headers.insert("Range".to_string(), "bytes=0-0".to_string());
@@ -63,16 +41,10 @@ pub async fn probe_domain(prober: &dyn Prober, url: &str) -> ProbeResult {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Classification helpers
-// ---------------------------------------------------------------------------
-
 fn classify_response(response: FetchResponse) -> ProbeResult {
     match response.status {
-        // Partial content or full OK — domain is accessible.
         200 | 206 => ProbeResult::Accessible,
 
-        // Redirects — extract Location header.
         301 | 302 | 307 | 308 => {
             let location = response
                 .headers
@@ -85,13 +57,11 @@ fn classify_response(response: FetchResponse) -> ProbeResult {
             }
         }
 
-        // Common block statuses.
         403 | 503 => ProbeResult::Blocked {
             status: response.status,
         },
 
-        // Anything else we treat as accessible (e.g. 404 means the server
-        // responded, just not with useful content — but the domain is up).
+        // 404 etc. — server responded, domain is reachable
         _ => ProbeResult::Accessible,
     }
 }
@@ -114,10 +84,6 @@ fn classify_error(e: FetchError) -> ProbeResult {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,8 +97,6 @@ mod tests {
             latency: Duration::from_millis(50),
         }
     }
-
-    // ---- classify_response ----
 
     #[test]
     fn test_accessible_200() {
@@ -152,7 +116,6 @@ mod tests {
 
     #[test]
     fn test_accessible_other_status() {
-        // 404 — server responded, domain is reachable.
         assert_eq!(
             classify_response(response(404, HashMap::new())),
             ProbeResult::Accessible
@@ -190,7 +153,6 @@ mod tests {
 
     #[test]
     fn test_redirect_302_no_location() {
-        // Missing Location header should produce empty string.
         assert_eq!(
             classify_response(response(302, HashMap::new())),
             ProbeResult::Redirect {
@@ -231,8 +193,6 @@ mod tests {
             }
         );
     }
-
-    // ---- classify_error ----
 
     #[test]
     fn test_error_timeout() {
@@ -287,8 +247,6 @@ mod tests {
             }
         );
     }
-
-    // ---- probe_domain integration with mock ----
 
     struct MockProber {
         response: Option<Result<FetchResponse, FetchError>>,
