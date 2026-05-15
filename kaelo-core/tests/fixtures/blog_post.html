@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Understanding Rust's Ownership Model - Tech Blog</title>
+</head>
+<body>
+    <nav class="main-nav">
+        <a href="/">Home</a>
+        <a href="/blog">Blog</a>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+    </nav>
+    <header class="site-header">
+        <h1>Tech Blog</h1>
+        <p class="tagline">Thoughts on programming and software</p>
+    </header>
+    <main>
+        <article class="post">
+            <h1>Understanding Rust's Ownership Model</h1>
+            <p class="meta">By Jane Doe &middot; Published on March 15, 2025</p>
+            <p>Rust's ownership model is one of its most distinctive features. It provides memory safety without garbage collection by enforcing strict rules at compile time.</p>
+            <h2>The Three Rules</h2>
+            <p>Every value in Rust has a single <strong>owner</strong>. When the owner goes out of scope, the value is dropped. Additionally, there can only be one mutable reference or any number of immutable references.</p>
+            <h2>Borrowing in Practice</h2>
+            <p>Borrowing allows functions to use data without taking ownership. This is similar to passing by reference in other languages, but with compile-time guarantees about aliasing and mutation.</p>
+            <pre><code>fn main() {
+    let s1 = String::from("hello");
+    let len = calculate_length(&amp;s1);
+    println!("The length of '{}' is {}.", s1, len);
+}
+
+fn calculate_length(s: &amp;String) -> usize {
+    s.len()
+}</code></pre>
+            <p>The above code demonstrates how borrowing works. The function <code>calculate_length</code> takes a reference to the String, so <code>s1</code> remains valid after the function call.</p>
+            <h2>Lifetimes</h2>
+            <p>Lifetimes are Rust's way of ensuring that references are always valid. Every reference has a lifetime, which is the scope for which that reference is valid.</p>
+            <blockquote>
+                <p>Lifetimes are a kind of generic that the compiler uses to keep track of how long references are valid.</p>
+            </blockquote>
+            <p>Understanding lifetimes is crucial for writing complex Rust programs without running into dangling pointer issues.</p>
+            <h2>Conclusion</h2>
+            <p>Rust's ownership model provides memory safety guarantees without runtime overhead. While it has a learning curve, the compiler's helpful error messages make it manageable.</p>
+        </article>
+    </main>
+    <aside class="sidebar">
+        <h3>Related Posts</h3>
+        <ul>
+            <li><a href="/blog/rust-async">Async Programming in Rust</a></li>
+            <li><a href="/blog/rust-traits">Understanding Traits</a></li>
+        </ul>
+        <h3>Newsletter</h3>
+        <p>Subscribe to get weekly updates!</p>
+        <form>
+            <input type="email" placeholder="your@email.com" />
+            <button>Subscribe</button>
+        </form>
+    </aside>
+    <footer class="site-footer">
+        <p>&copy; 2025 Tech Blog. All rights reserved.</p>
+        <nav class="footer-nav">
+            <a href="/privacy">Privacy Policy</a>
+            <a href="/terms">Terms of Service</a>
+            <a href="/sitemap">Sitemap</a>
+        </nav>
+    </footer>
+</body>
+</html>

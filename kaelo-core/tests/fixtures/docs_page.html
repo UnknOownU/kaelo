@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>API Reference - Project Docs</title>
+</head>
+<body>
+    <nav class="docs-nav">
+        <a href="/docs/getting-started">Getting Started</a>
+        <a href="/docs/api">API Reference</a>
+        <a href="/docs/examples">Examples</a>
+        <a href="/docs/changelog">Changelog</a>
+    </nav>
+    <header class="docs-header">
+        <h1>Project Documentation</h1>
+        <div class="search-bar">
+            <input type="text" placeholder="Search docs..." />
+        </div>
+    </header>
+    <main class="docs-content">
+        <article>
+            <h1>API Reference</h1>
+            <p>This document describes the public API for the library. All functions are documented with their signatures, parameters, and return types.</p>
+
+            <h2 id="installation">Installation</h2>
+            <p>Add the dependency to your <code>Cargo.toml</code>:</p>
+            <pre><code class="language-toml">[dependencies]
+mylib = "2.0"</code></pre>
+
+            <h2 id="core-functions">Core Functions</h2>
+
+            <h3 id="parse"><code>pub fn parse(input: &amp;str) -> Result&lt;Document, Error&gt;</code></h3>
+            <p>Parses a string input into a <code>Document</code> structure. This is the main entry point for the library.</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Parameter</th>
+                        <th>Type</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>input</code></td>
+                        <td><code>&amp;str</code></td>
+                        <td>The raw string to parse</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p><strong>Returns:</strong> A <code>Result&lt;Document, Error&gt;</code> where <code>Document</code> contains the parsed AST.</p>
+
+            <h3 id="render"><code>pub fn render(doc: &amp;Document, format: OutputFormat) -> String</code></h3>
+            <p>Renders a parsed document to the specified output format.</p>
+            <pre><code class="language-rust">use mylib::{parse, render, OutputFormat};
+
+let doc = parse("input text")?;
+let output = render(&amp;doc, OutputFormat::HTML);
+println!("{}", output);</code></pre>
+
+            <h2 id="error-handling">Error Handling</h2>
+            <p>All functions return <code>Result</code> types. The <code>Error</code> enum includes:</p>
+            <ul>
+                <li><code>Error::InvalidInput</code> — the input string could not be parsed</li>
+                <li><code>Error::FormatError</code> — the output format was not supported</li>
+                <li><code>Error::IoError</code> — an I/O error occurred</li>
+            </ul>
+
+            <h2 id="configuration">Configuration</h2>
+            <p>The library can be configured using the <code>Config</code> builder:</p>
+            <pre><code class="language-rust">let config = Config::builder()
+    .strict_mode(true)
+    .max_depth(10)
+    .build();</code></pre>
+        </article>
+    </main>
+    <footer class="docs-footer">
+        <p>Built with &hearts; by the team. Last updated: 2025-03-15</p>
+        <nav>
+            <a href="/privacy">Privacy</a>
+            <a href="/terms">Terms</a>
+        </nav>
+    </footer>
+</body>
+</html>

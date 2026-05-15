@@ -1,0 +1,281 @@
+use clap::{Parser, Subcommand};
+use kaelo_fetch::backend::FetchBackend;
+use std::path::PathBuf;
+
+#[derive(Parser)]
+#[command(
+    name = "kaelo",
+    version,
+    about = "Intelligent web fetcher for AI agents"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Start MCP server (stdio transport)
+    Serve,
+    /// Cache management
+    Cache {
+        #[command(subcommand)]
+        command: CacheCommands,
+    },
+    /// Fetch a URL and return Markdown
+    Fetch {
+        /// URL to fetch
+        url: String,
+    },
+    /// Print setup instructions and current configuration
+    Setup,
+    /// Run a demo to verify installation works
+    ProveIt {
+        /// Run a harder challenge (Cloudflare-protected URL)
+        #[arg(long)]
+        challenge: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum CacheCommands {
+    /// Show cache status
+    Status,
+    /// Clear cache
+    Clear,
+    /// Export route cache strategies to a JSON file
+    Export {
+        /// Output file path
+        path: PathBuf,
+    },
+    /// Import route cache strategies from a JSON file
+    Import {
+        /// Input file path
+        path: PathBuf,
+    },
+    /// Import a community route pack from a JSON file
+    ImportPack {
+        /// Input pack file path
+        path: PathBuf,
+    },
+    /// List domains with auth configured (tokens redacted)
+    ShowAuth,
+    /// Remove auth config for a domain
+    ForgetAuth {
+        /// Domain to remove auth for
+        domain: String,
+    },
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Serve => {
+            let storage = kaelo_core::storage::Storage::open("kaelo.db")?;
+            let server = kaelo_mcp::KaeloServer::new(storage);
+            kaelo_mcp::server::serve_stdio(server).await?;
+        }
+        Commands::Cache { command } => {
+            let config = kaelo_core::config::Config::from_env();
+            match command {
+                CacheCommands::Status => {
+                    match kaelo_core::storage::Storage::open(&config.db_path.to_string_lossy()) {
+                        Ok(storage) => {
+                            let route_cache =
+                                kaelo_core::storage::route_cache::RouteCache::new(&storage);
+                            let content_cache =
+                                kaelo_core::storage::content_cache::ContentCache::new(&storage);
+
+                            let route_count = route_cache.count_entries().unwrap_or(0);
+                            let domains = route_cache.get_all_domains().unwrap_or_default();
+                            let stats = content_cache.stats().unwrap_or_else(|_| {
+                                kaelo_core::storage::content_cache::CacheStats {
+                                    entry_count: 0,
+                                    total_size_bytes: 0,
+                                    top_domains: vec![],
+                                }
+                            });
+
+                            println!("Route Cache:");
+                            println!("  Entries: {}", route_count);
+                            println!("  Domains: {:?}", domains);
+                            println!("Content Cache:");
+                            println!("  Entries: {}", stats.entry_count);
+                            println!("  Size: {} bytes", stats.total_size_bytes);
+                        }
+                        Err(e) => eprintln!("Error opening database: {}", e),
+                    }
+                }
+                CacheCommands::Clear => {
+                    match kaelo_core::storage::Storage::open(&config.db_path.to_string_lossy()) {
+                        Ok(storage) => {
+                            let content_cache =
+                                kaelo_core::storage::content_cache::ContentCache::new(&storage);
+                            content_cache.clear_all()?;
+                            println!("Cache cleared.");
+                        }
+                        Err(e) => eprintln!("Error opening database: {}", e),
+                    }
+                }
+                CacheCommands::Export { path } => {
+                    match kaelo_core::storage::Storage::open(&config.db_path.to_string_lossy()) {
+                        Ok(storage) => {
+                            let route_cache =
+                                kaelo_core::storage::route_cache::RouteCache::new(&storage);
+                            route_cache.export_json(&path)?;
+                            println!("Exported route cache to {}", path.display());
+                        }
+                        Err(e) => eprintln!("Error opening database: {}", e),
+                    }
+                }
+                CacheCommands::Import { path } => {
+                    match kaelo_core::storage::Storage::open(&config.db_path.to_string_lossy()) {
+                        Ok(storage) => {
+                            let route_cache =
+                                kaelo_core::storage::route_cache::RouteCache::new(&storage);
+                            let count = route_cache.import_json(&path)?;
+                            println!("Imported {} strategies from {}", count, path.display());
+                        }
+                        Err(e) => eprintln!("Error opening database: {}", e),
+                    }
+                }
+                CacheCommands::ImportPack { path } => {
+                    match kaelo_core::storage::Storage::open(&config.db_path.to_string_lossy()) {
+                        Ok(storage) => {
+                            let route_cache =
+                                kaelo_core::storage::route_cache::RouteCache::new(&storage);
+                            let count = route_cache.import_pack(&path)?;
+                            println!("Imported {} strategies from pack {}", count, path.display());
+                        }
+                        Err(e) => eprintln!("Error opening database: {}", e),
+                    }
+                }
+                CacheCommands::ShowAuth => {
+                    println!("Auth config is read from KAELO_AUTH_* env vars.");
+                    println!("No auth domains currently configured.");
+                }
+                CacheCommands::ForgetAuth { domain } => {
+                    println!("Auth config is read from KAELO_AUTH_* env vars.");
+                    println!("Unset the relevant variable to remove auth for {}", domain);
+                }
+            }
+        }
+        Commands::Fetch { url } => {
+            let backend = kaelo_fetch::backends::HttpSimple::new()
+                .map_err(|e| anyhow::anyhow!("Failed to create backend: {}", e))?;
+
+            let request = kaelo_core::types::FetchRequest {
+                url: url.clone(),
+                headers: std::collections::HashMap::new(),
+                timeout: std::time::Duration::from_secs(30),
+                follow_redirects: true,
+            };
+
+            let response = backend
+                .fetch(request)
+                .await
+                .map_err(|e| anyhow::anyhow!("Fetch failed: {:?}", e))?;
+
+            let html = String::from_utf8_lossy(&response.body);
+            let extracted = kaelo_core::extraction::extract(&html, &url, &response.content_type)?;
+
+            match extracted {
+                Some(content) => print!("{}", content.text_content),
+                None => print!("{}", html),
+            }
+        }
+        Commands::Setup => {
+            let config = kaelo_core::config::Config::from_env();
+            println!("Kaelo Configuration:");
+            println!("  Cache enabled: {}", config.cache_enabled);
+            println!("  Cache max size: {} bytes", config.cache_max_size);
+            println!("  Cache TTL: {} seconds", config.cache_ttl);
+            println!("  Database: {:?}", config.db_path);
+            println!("  Log level: {}", config.log_level);
+            println!();
+            println!("MCP Server Configuration (for OpenCode/Claude Code):");
+            println!("  Add to your MCP config:");
+            println!("  {{");
+            println!("    \"mcpServers\": {{");
+            println!("      \"kaelo\": {{");
+            println!("        \"command\": \"kaelo\",");
+            println!("        \"args\": [\"serve\"]");
+            println!("      }}");
+            println!("    }}");
+            println!("  }}");
+            println!();
+            println!("Environment Variables:");
+            println!("  KAELO_CACHE_ENABLED   - Enable/disable cache (default: true)");
+            println!("  KAELO_CACHE_MAX_SIZE  - Max cache size in bytes (default: 52428800)");
+            println!("  KAELO_CACHE_TTL       - Cache TTL in seconds (default: 3600)");
+            println!("  KAELO_DB_PATH         - Database path (default: ~/.config/kaelo/kaelo.db)");
+            println!("  KAELO_LOG_LEVEL       - Log level (default: info)");
+        }
+        Commands::ProveIt { challenge } => {
+            println!("Kaelo prove-it: Verifying installation...\n");
+
+            let backend = kaelo_fetch::backends::HttpSimple::new()
+                .map_err(|e| anyhow::anyhow!("Backend failed: {}", e))?;
+            println!("✓ HTTP backend initialized (HttpSimple)");
+
+            let (demo_url, label) = if challenge {
+                println!("Challenge mode: attempting a harder, Cloudflare-protected URL...");
+                ("https://nowsecure.nl", "nowsecure.nl (Cloudflare)")
+            } else {
+                ("https://httpbin.org/get", "httpbin.org")
+            };
+
+            print!("→ Fetching {}... ", label);
+
+            let request = kaelo_core::types::FetchRequest {
+                url: demo_url.to_string(),
+                headers: std::collections::HashMap::new(),
+                timeout: std::time::Duration::from_secs(10),
+                follow_redirects: true,
+            };
+
+            match backend.fetch(request).await {
+                Ok(response) => {
+                    println!(
+                        "✓ (status {}, {} bytes)",
+                        response.status,
+                        response.body.len()
+                    );
+                    if challenge {
+                        println!(
+                            "  Note: HttpSimple may be blocked by Cloudflare. \
+                            Enable the tls-impersonation feature for TlsChrome support."
+                        );
+                    }
+                }
+                Err(e) => {
+                    println!("✗ {:?}", e);
+                    return Err(anyhow::anyhow!("Fetch failed"));
+                }
+            }
+
+            print!("→ Testing extraction pipeline... ");
+            let html = r#"<html><body><article><h1>Test</h1><p>Hello from Kaelo!</p></article></body></html>"#;
+            match kaelo_core::extraction::extract(html, "https://example.com", "text/html") {
+                Ok(Some(content)) => {
+                    println!("✓ (extracted {} chars)", content.text_content.len());
+                }
+                Ok(None) => println!("✗ No content extracted"),
+                Err(e) => println!("✗ {}", e),
+            }
+
+            print!("→ Testing storage... ");
+            match kaelo_core::storage::Storage::open(":memory:") {
+                Ok(_) => println!("✓"),
+                Err(e) => println!("✗ {}", e),
+            }
+
+            println!("\nAll checks passed! Kaelo is ready to use.");
+            println!("Run `kaelo serve` to start the MCP server.");
+        }
+    }
+
+    Ok(())
+}

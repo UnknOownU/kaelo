@@ -61,11 +61,30 @@ Agent requests URL
 ## Quick Start
 
 ```bash
-# Install (when available)
-cargo install kaelo
+# Build from source
+git clone https://github.com/user/kaelo.git
+cd kaelo
+cargo install --path .
+
+# Or install via Homebrew
+brew install --build-from-source packaging/homebrew/kaelo.rb
 ```
 
-Add to your OpenCode config (`opencode.json`):
+### CLI Commands
+
+```bash
+kaelo serve            # Start MCP server (for agent integration)
+kaelo fetch <url>      # Fetch a URL and print extracted Markdown
+kaelo prove-it         # Run self-test to verify installation
+kaelo cache status     # Show cache size, entries, top domains
+kaelo cache clear      # Clear everything
+kaelo cache clear --domain X    # Clear specific domain
+kaelo cache clear --older-than 24h  # Clear old entries
+```
+
+### MCP Configuration
+
+**OpenCode** (`opencode.json`):
 
 ```jsonc
 {
@@ -74,6 +93,44 @@ Add to your OpenCode config (`opencode.json`):
       "type": "local",
       "command": ["kaelo"],
       "enabled": true
+    }
+  }
+}
+```
+
+**Claude Code** (`.claude/settings.json`):
+
+```jsonc
+{
+  "mcpServers": {
+    "kaelo": {
+      "command": "kaelo"
+    }
+  }
+}
+```
+
+**Cursor** (`.cursor/mcp.json`):
+
+```jsonc
+{
+  "mcpServers": {
+    "kaelo": {
+      "command": "kaelo",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+**Windsurf** (`.windsurf/mcp.json`):
+
+```jsonc
+{
+  "mcpServers": {
+    "kaelo": {
+      "command": "kaelo",
+      "args": ["serve"]
     }
   }
 }
@@ -109,7 +166,20 @@ kaelo cache clear --older-than 24h  # Clear old entries
 
 ## Configuration
 
-Via environment variables or config file:
+Via environment variables or TOML config file (`~/.config/kaelo/config.toml`):
+
+```toml
+# ~/.config/kaelo/config.toml
+cache_enabled = true
+cache_max_size = 52428800   # 50 MB
+cache_max_entry = 102400    # 100 KB per entry
+cache_ttl = 3600            # 1 hour
+cache_compression = "gzip"
+db_path = "~/.config/kaelo/kaelo.db"
+log_level = "info"
+```
+
+Environment variables (override config file):
 
 ```
 KAELO_CACHE_ENABLED=true        # Master cache switch
@@ -133,7 +203,7 @@ KAELO_CACHE_COMPRESSION=gzip    # Compress cached content
 
 ## Status
 
-**Pre-alpha.** In design phase. See [PRD.md](./PRD.md) for full product requirements.
+**Pre-alpha.** Core extraction, caching, and MCP server implemented. See [PRD.md](./PRD.md) for full product requirements.
 
 ## License
 

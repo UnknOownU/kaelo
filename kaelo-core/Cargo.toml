@@ -1,0 +1,25 @@
+[package]
+name = "kaelo-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite_migration = "1.3"
+flate2 = "1"
+sha2 = "0.10"
+dom_smoothie = "0.17"
+toml = "0.8"
+
+[dev-dependencies]
+dom_smoothie = "0.17"
+criterion = "0.5"
+
+[[bench]]
+name = "benchmark"
+harness = false

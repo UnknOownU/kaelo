@@ -1,0 +1,20 @@
+[package]
+name = "kaelo-fetch"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+kaelo-core = { path = "../kaelo-core" }
+reqwest = { version = "0.12", default-features = true }
+wreq = { version = "=6.0.0-rc.28", optional = true }
+wreq-util = { version = "3.0.0-rc.10", optional = true }
+chromiumoxide = { version = "0.7", optional = true }
+
+[features]
+default = []
+tls-impersonation = ["wreq", "wreq-util"]
+headless = ["chromiumoxide"]

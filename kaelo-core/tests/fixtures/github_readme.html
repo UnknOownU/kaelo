@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>user/awesome-project: A blazingly fast tool for stuff · GitHub</title>
+</head>
+<body>
+    <header class="AppHeader">
+        <nav>
+            <a href="/">GitHub</a>
+            <a href="/pulls">Pull requests</a>
+            <a href="/issues">Issues</a>
+            <a href="/marketplace">Marketplace</a>
+        </nav>
+    </header>
+    <main>
+        <div class="repository-content">
+            <div class="BorderGrid-row">
+                <div class="BorderGrid-cell">
+                    <article class="markdown-body entry-content container-lg">
+                        <h1><a id="user-content-awesome-project" class="anchor" href="#awesome-project">awesome-project</a></h1>
+                        <p>A blazingly fast tool for doing things with data. Built in Rust with zero dependencies.</p>
+                        <h2><a id="user-content-features" class="anchor" href="#features">Features</a></h2>
+                        <ul>
+                            <li>Zero-copy parsing for maximum throughput</li>
+                            <li>Async/await support with Tokio runtime</li>
+                            <li>Plugin system for extensibility</li>
+                            <li>Cross-platform: Linux, macOS, Windows, WASM</li>
+                        </ul>
+                        <h2><a id="user-content-installation" class="anchor" href="#installation">Installation</a></h2>
+                        <div class="highlight highlight-source-shell"><pre>cargo install awesome-project</pre></div>
+                        <p>Or add to your <code>Cargo.toml</code>:</p>
+                        <div class="highlight highlight-source-toml"><pre>[dependencies]
+awesome-project = "1.0"</pre></div>
+                        <h2><a id="user-content-quick-start" class="anchor" href="#quick-start">Quick Start</a></h2>
+                        <div class="highlight highlight-source-rust"><pre><span class="pl-k">use</span> awesome_project::<span class="pl-smi">Pipeline</span>;
+
+<span class="pl-k">let</span> result = Pipeline::new()
+    .source(<span class="pl-s">"data.csv"</span>)
+    .filter(|row| row.age > <span class="pl-c1">18</span>)
+    .transform(|row| row.name.to_uppercase())
+    .collect();</pre></div>
+                        <h2><a id="user-content-benchmarks" class="anchor" href="#benchmarks">Benchmarks</a></h2>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Library</th>
+                                    <th>Throughput</th>
+                                    <th>Latency</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>awesome-project</td>
+                                    <td>1.2M rows/s</td>
+                                    <td>0.8ms</td>
+                                </tr>
+                                <tr>
+                                    <td>competitor-a</td>
+                                    <td>800K rows/s</td>
+                                    <td>1.2ms</td>
+                                </tr>
+                                <tr>
+                                    <td>competitor-b</td>
+                                    <td>500K rows/s</td>
+                                    <td>2.1ms</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <h2><a id="user-content-license" class="anchor" href="#license">License</a></h2>
+                        <p>MIT OR Apache-2.0</p>
+                    </article>
+                </div>
+            </div>
+        </div>
+    </main>
+    <footer class="footer">
+        <nav>
+            <a href="/site/terms">Terms</a>
+            <a href="/site/privacy">Privacy</a>
+            <a href="/site/security">Security</a>
+        </nav>
+        <p>&copy; 2025 GitHub, Inc.</p>
+    </footer>
+</body>
+</html>
