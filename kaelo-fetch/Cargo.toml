@@ -12,9 +12,10 @@ kaelo-core = { path = "../kaelo-core" }
 reqwest = { version = "0.12", default-features = true }
 wreq = { version = "=6.0.0-rc.28", optional = true }
 wreq-util = { version = "3.0.0-rc.10", optional = true }
-chromiumoxide = { version = "0.7", optional = true }
+chromiumoxide = { version = "0.9", optional = true }
+futures = { version = "0.3", optional = true }
 
 [features]
 default = []
 tls-impersonation = ["wreq", "wreq-util"]
-headless = ["chromiumoxide"]
+headless = ["chromiumoxide", "futures"]

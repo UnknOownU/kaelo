@@ -18,7 +18,7 @@ use kaelo_fetch::backend::FetchBackend;
 use kaelo_fetch::backends::HttpSimple;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content};
-use rmcp::{tool, tool_router, transport::stdio, ErrorData, ServiceExt};
+use rmcp::{tool, tool_handler, tool_router, transport::stdio, ErrorData, ServiceExt};
 use tracing_subscriber::EnvFilter;
 
 struct KaeloState {
@@ -58,6 +58,9 @@ impl Default for KaeloServer {
 pub struct WebFetchParams {
     /// The URL to fetch
     pub url: String,
+    /// Fetch strategy: "HttpSimple", "TlsChrome", "TlsMobile", "Headless", "PublicApi"
+    #[serde(default)]
+    pub strategy: Option<String>,
     /// Maximum token budget (approximate character count / 4). 0 = no limit.
     #[serde(default)]
     pub token_budget: Option<u32>,
@@ -103,7 +106,11 @@ async fn fetch_with_strategy(
                 HttpSimple::new()?.fetch(request).await
             }
         }
-        Strategy::Headless | Strategy::PublicApi => HttpSimple::new()?.fetch(request).await,
+        Strategy::Headless => {
+            use kaelo_fetch::backends::HeadlessBrowser;
+            HeadlessBrowser::new().await?.fetch(request).await
+        }
+        Strategy::PublicApi => HttpSimple::new()?.fetch(request).await,
     }
 }
 
@@ -176,7 +183,7 @@ fn parse_strategy_name(name: &str) -> Result<Strategy> {
     }
 }
 
-#[tool_router(server_handler)]
+#[tool_router]
 impl KaeloServer {
     #[tool(
         name = "web_fetch",
@@ -188,15 +195,20 @@ impl KaeloServer {
     ) -> Result<CallToolResult, ErrorData> {
         let no_cache = params.no_cache.unwrap_or(false);
 
-        let (cached, resolved) = {
+        let (cached, strategy) = {
             let storage = self.state.storage.lock().map_err(internal_err)?;
             let cached = if !no_cache {
                 check_content_cache(&storage, &params.url)
             } else {
                 None
             };
-            let resolved = resolve_strategy(&storage, &params.url);
-            (cached, resolved)
+
+            let strategy = match &params.strategy {
+                Some(s) => parse_strategy_name(s).unwrap_or(Strategy::HttpSimple),
+                None => resolve_strategy(&storage, &params.url).strategy,
+            };
+
+            (cached, strategy)
         };
 
         let markdown = if let Some(content) = cached {
@@ -210,7 +222,7 @@ impl KaeloServer {
             };
 
             let start = std::time::Instant::now();
-            let response = fetch_with_strategy(&resolved.strategy, request)
+            let response = fetch_with_strategy(&strategy, request)
                 .await
                 .map_err(internal_err)?;
             let latency_ms = start.elapsed().as_millis() as u64;
@@ -223,13 +235,20 @@ impl KaeloServer {
                 .map(|e| e.text_content)
                 .unwrap_or_else(|| html.into_owned());
 
+            let domain = params
+                .url
+                .split('/')
+                .nth(2)
+                .unwrap_or("unknown")
+                .to_string();
+
             {
                 let storage = self.state.storage.lock().map_err(internal_err)?;
                 store_and_record(
                     &storage,
                     &params.url,
-                    &resolved.domain,
-                    &resolved.strategy,
+                    &domain,
+                    &strategy,
                     &markdown,
                     &response.content_type,
                     latency_ms,
@@ -424,6 +443,9 @@ impl KaeloServer {
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 }
+
+#[tool_handler(name = "kaelo", version = "0.1.0")]
+impl rmcp::handler::server::ServerHandler for KaeloServer {}
 
 fn truncate_preview(content: &str, max_len: usize) -> String {
     if content.len() > max_len {
