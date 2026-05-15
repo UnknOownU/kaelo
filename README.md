@@ -62,12 +62,16 @@ Agent requests URL
 
 ```bash
 # Build from source
-git clone https://github.com/user/kaelo.git
+git clone https://github.com/HachemiH/kaelo.git
 cd kaelo
 cargo install --path .
 
 # Or install via Homebrew
 brew install --build-from-source packaging/homebrew/kaelo.rb
+
+# Optional: for JS-heavy SPA sites (RSI Galactapedia, Bloomberg, etc.)
+brew install --cask chromium
+xattr -cr /Applications/Chromium.app  # macOS Gatekeeper fix
 ```
 
 ### CLI Commands
@@ -140,20 +144,37 @@ That's it. Kaelo auto-starts with your agent session.
 
 ## MCP Tools
 
-**Available in MVP (v0.1):**
+**Available (v0.1):**
 
 | Tool | Description | Key Parameters |
 |---|---|---|
-| `web_fetch` | Fetch a URL, return clean Markdown | url, token_budget, focus, no_cache |
+| `web_fetch` | Fetch a URL, return clean Markdown | url, strategy, token_budget, focus, no_cache |
+| `web_search` | Search DuckDuckGo, optionally fetch top results | query, max_results, fetch_content |
 | `cache_status` | Show cache statistics | — |
-| `cache_clear` | Clear cache entries | domain, older_than, strategies |
+| `cache_clear` | Clear cached content | — |
+| `ping` | Health check — returns pong | — |
 
-**Planned (post-MVP):**
+## Backends
 
-| Tool | Description | Key Parameters |
+| Strategy | Backend | Use Case |
 |---|---|---|
-| `web_search` | Search the web, return results | query, max_results, fetch_content |
-| `web_extract` | Fetch and extract targeted content | url, query, token_budget |
+| `HttpSimple` | reqwest | Static sites, APIs |
+| `TlsChrome` | wreq (TLS impersonation) | Cloudflare-protected sites |
+| `TlsMobile` | wreq (mobile TLS) | Sites that block desktop bots |
+| `Headless` | chromiumoxide | JS-heavy SPAs (React, Next.js, Vue) |
+| `PublicApi` | (planned) | Reddit, HN, YouTube native APIs |
+
+Kaelo auto-selects the best strategy per domain using its route cache. You can force a specific strategy via the `strategy` parameter:
+
+```json
+{"url": "https://example.com", "strategy": "Headless"}
+```
+
+**Headless browser** requires Chromium installed locally:
+```bash
+brew install --cask chromium
+xattr -cr /Applications/Chromium.app
+```
 
 ## Cache Management
 
@@ -190,20 +211,22 @@ KAELO_CACHE_COMPRESSION=gzip    # Compress cached content
 
 ## Competitive Landscape
 
-| | Kaelo | webclaw | insane-search | Firecrawl |
+| | Kaelo | Fetcher MCP | markdown-for-agents | server-fetch |
 |---|---|---|---|---|
-| **Language** | Rust | Rust | Python | TypeScript |
-| **Intelligent routing** | ✅ | ❌ | ❌ | ❌ |
-| **Learning cache** | ✅ | ❌ | ❌ | ❌ |
-| **Token-aware** | ✅ | ❌ | ❌ | ❌ |
-| **100% local** | ✅ | Mostly | ✅ | ❌ |
-| **MCP server** | ✅ | ✅ | ❌ | ❌ |
-| **License** | MIT | AGPL-3.0 | MIT | Commercial |
-| **Price** | Free | Free | Free | $19-$499/mo |
+| **Language** | Rust | TypeScript | TypeScript | TypeScript |
+| **HTTP fetch** | ✅ | via Playwright | via Playwright | ✅ |
+| **JS rendering** | ✅ chromiumoxide | ✅ Playwright | ✅ Playwright | ❌ |
+| **TLS impersonation** | ✅ | ❌ | ❌ | ❌ |
+| **Route cache** | ✅ SQLite | ❌ | ✅ LRU | ❌ |
+| **Web search** | ✅ DuckDuckGo | ❌ | ✅ DuckDuckGo | ❌ |
+| **Token-aware** | ✅ budget, focus | ❌ | ✅ content scoring | ❌ |
+| **Local & free** | ✅ MIT | ✅ MIT | ✅ MIT | ✅ MIT |
 
 ## Status
 
-**Pre-alpha.** Core extraction, caching, and MCP server implemented. See [PRD.md](./PRD.md) for full product requirements.
+**v0.1.** Core fetching (HTTP, TLS, headless browser), route cache, content cache, web search, MCP server, CLI — all functional. Tested against static sites, Cloudflare-protected sites, and JS-heavy SPAs (RSI Galactapedia).
+
+See [PRD.md](./PRD.md) for full product vision.
 
 ## License
 
