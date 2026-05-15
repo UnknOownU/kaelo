@@ -224,7 +224,7 @@ KAELO_CACHE_COMPRESSION=gzip    # Compress cached content
 
 ## Status
 
-**v0.1.** Core fetching (HTTP, TLS, headless browser), route cache, content cache, web search, MCP server, CLI — all functional. Tested against static sites, Cloudflare-protected sites, and JS-heavy SPAs (RSI Galactapedia).
+**Beta (v0.1).** Core fetching (HTTP, TLS, headless browser), route cache, content cache, web search, MCP server, CLI — all functional. Tested against static sites, Cloudflare-protected sites, and JS-heavy SPAs (RSI Galactapedia).
 
 See [PRD.md](./PRD.md) for full product vision.
 
