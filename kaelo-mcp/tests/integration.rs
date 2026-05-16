@@ -228,6 +228,10 @@ fn mcp_ping_returns_pong() {
         text.contains("pong"),
         "ping tool should return 'pong', got: {text}"
     );
+    assert!(
+        text.contains("version"),
+        "ping tool should return 'version', got: {text}"
+    );
 }
 
 #[test]

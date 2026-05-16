@@ -16,7 +16,7 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 kaelo-core = { path = "../kaelo-core" }
-reqwest = { version = "0.12", default-features = true }
+reqwest = { workspace = true }
 wreq = { version = "=6.0.0-rc.28", optional = true }
 wreq-util = { version = "3.0.0-rc.10", optional = true }
 chromiumoxide = { version = "0.9", optional = true }

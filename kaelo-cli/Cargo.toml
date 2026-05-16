@@ -22,3 +22,5 @@ clap = { version = "4", features = ["derive"] }
 kaelo-core = { path = "../kaelo-core" }
 kaelo-fetch = { path = "../kaelo-fetch", features = ["headless"] }
 kaelo-mcp = { path = "../kaelo-mcp" }
+reqwest = { workspace = true }
+semver = { workspace = true }

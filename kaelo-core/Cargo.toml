@@ -21,11 +21,13 @@ flate2 = "1"
 sha2 = "0.10"
 dom_smoothie = "0.17"
 toml = "0.8"
-reqwest = { version = "0.12", default-features = true }
+reqwest = { workspace = true }
+semver = { workspace = true }
 
 [dev-dependencies]
 dom_smoothie = "0.17"
 criterion = "0.5"
+filetime = "0.2"
 
 [[bench]]
 name = "benchmark"

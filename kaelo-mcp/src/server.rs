@@ -593,7 +593,10 @@ impl KaeloServer {
 
     #[tool(name = "ping", description = "Health check — returns pong")]
     fn ping(&self) -> String {
-        "pong".to_string()
+        format!(
+            "{{\"status\":\"pong\",\"version\":\"{}\"}}",
+            env!("CARGO_PKG_VERSION")
+        )
     }
 
     #[tool(name = "cache_status", description = "Show cache statistics")]

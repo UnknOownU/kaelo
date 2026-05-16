@@ -3,6 +3,7 @@ use kaelo_fetch::backend::FetchBackend;
 use std::path::PathBuf;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use kaelo_core::update;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -37,6 +38,15 @@ enum Commands {
         /// Run a harder challenge (Cloudflare-protected URL)
         #[arg(long)]
         challenge: bool,
+    },
+    /// Check for updates and optionally self-update
+    Update {
+        /// Only check for updates, don't install
+        #[arg(long)]
+        check: bool,
+        /// Reinstall even if already up-to-date
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -129,6 +139,33 @@ async fn main() -> anyhow::Result<()> {
                 config.searxng_url.clone(),
                 config.search_backend.clone(),
             );
+
+            {
+                let cache_path = config.db_path.parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join(".update-check");
+
+                if kaelo_core::update::should_check(&cache_path) {
+                    tokio::spawn(async move {
+                        match kaelo_core::update::check_for_update().await {
+                            Ok(Some(info)) => {
+                                tracing::warn!(
+                                    "Update available: v{} → v{} — {}",
+                                    info.current, info.latest, info.release_url
+                                );
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                tracing::debug!("Update check failed: {e}");
+                            }
+                        }
+                    });
+                    // Write cache AFTER spawning (don't block on it)
+                    if let Err(e) = kaelo_core::update::write_check_cache(&cache_path) {
+                        tracing::debug!("Failed to write update cache: {e}");
+                    }
+                }
+            }
 
             tokio::select! {
                 result = kaelo_mcp::server::serve_stdio(server) => {
@@ -344,6 +381,129 @@ async fn main() -> anyhow::Result<()> {
 
             println!("\nAll checks passed! Kaelo is ready to use.");
             println!("Run `kaelo serve` to start the MCP server.");
+        }
+        Commands::Update { check, force } => {
+            let method = update::detect_install_method();
+            match method {
+                update::InstallMethod::Homebrew => {
+                    println!("Kaelo was installed via Homebrew.");
+                    println!("Run: brew upgrade kaelo");
+                    return Ok(());
+                }
+                update::InstallMethod::Cargo => {
+                    println!("Kaelo was installed via cargo.");
+                    println!("Run: cargo install kaelo-cli");
+                    return Ok(());
+                }
+                _ => {}
+            }
+
+            println!("Checking for updates...");
+
+            match update::check_for_update().await {
+                Ok(Some(update_info)) => {
+                    println!(
+                        "Update available: v{} → v{}",
+                        update_info.current, update_info.latest
+                    );
+                    println!("Release: {}", update_info.release_url);
+
+                    if let Some(notes) = &update_info.release_notes {
+                        let preview: Vec<&str> = notes.lines().take(3).collect();
+                        if !preview.is_empty() {
+                            println!();
+                            for line in preview {
+                                println!("  {}", line);
+                            }
+                            if notes.lines().count() > 3 {
+                                println!("  ... (see release page for full notes)");
+                            }
+                        }
+                    }
+
+                    if check {
+                        return Ok(());
+                    }
+
+                    print!(
+                        "\nDownload and install v{}? [y/N] ",
+                        update_info.latest
+                    );
+                    use std::io::{self, BufRead, Write};
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().lock().read_line(&mut input)?;
+
+                    if !input.trim().eq_ignore_ascii_case("y") {
+                        println!("Update cancelled.");
+                        return Ok(());
+                    }
+
+                    let target = update::platform_target()?;
+                    println!("Downloading for {}...", target);
+
+                    match update::download_update(&target, &format!("v{}", update_info.latest))
+                        .await
+                    {
+                        Ok(binary_path) => {
+                            let current_exe = std::env::current_exe()?;
+
+                            match std::fs::copy(&binary_path, &current_exe) {
+                                Ok(_) => {
+                                    println!(
+                                        "Updated to v{}. Restart Kaelo to use the new version.",
+                                        update_info.latest
+                                    );
+                                }
+                                Err(e) => {
+                                    println!("Failed to replace binary: {e}");
+                                    println!("The new binary is at: {}", binary_path.display());
+                                    println!(
+                                        "Install manually: cp {} {}",
+                                        binary_path.display(),
+                                        current_exe.display()
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Update failed: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                Ok(None) => {
+                    if force {
+                        let current = update::current_version();
+                        let target = update::platform_target()?;
+                        println!("Already up to date (v{}). Force reinstalling...", current);
+                        println!("Downloading for {}...", target);
+
+                        match update::download_update(&target, &format!("v{}", current)).await {
+                            Ok(binary_path) => {
+                                let current_exe = std::env::current_exe()?;
+                                match std::fs::copy(&binary_path, &current_exe) {
+                                    Ok(_) => println!("Reinstalled v{}.", current),
+                                    Err(e) => {
+                                        println!("Failed to replace binary: {e}");
+                                        println!("New binary at: {}", binary_path.display());
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Download failed: {e}");
+                                std::process::exit(1);
+                            }
+                        }
+                    } else {
+                        println!("Already up to date (v{}).", update::current_version());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Unable to check for updates: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
     }
 
