@@ -83,7 +83,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/kaelo-*/*
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.sha256
           body: |
             ## Install
 
