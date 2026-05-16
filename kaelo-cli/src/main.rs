@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
+use kaelo_core::update;
 use kaelo_fetch::backend::FetchBackend;
 use std::path::PathBuf;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use kaelo_core::update;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -141,7 +141,9 @@ async fn main() -> anyhow::Result<()> {
             );
 
             {
-                let cache_path = config.db_path.parent()
+                let cache_path = config
+                    .db_path
+                    .parent()
                     .unwrap_or_else(|| std::path::Path::new("."))
                     .join(".update-check");
 
@@ -151,7 +153,9 @@ async fn main() -> anyhow::Result<()> {
                             Ok(Some(info)) => {
                                 tracing::warn!(
                                     "Update available: v{} → v{} — {}",
-                                    info.current, info.latest, info.release_url
+                                    info.current,
+                                    info.latest,
+                                    info.release_url
                                 );
                             }
                             Ok(None) => {}
@@ -425,10 +429,7 @@ async fn main() -> anyhow::Result<()> {
                         return Ok(());
                     }
 
-                    print!(
-                        "\nDownload and install v{}? [y/N] ",
-                        update_info.latest
-                    );
+                    print!("\nDownload and install v{}? [y/N] ", update_info.latest);
                     use std::io::{self, BufRead, Write};
                     io::stdout().flush()?;
                     let mut input = String::new();

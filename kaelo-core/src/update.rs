@@ -161,7 +161,10 @@ pub async fn check_for_update() -> Result<Option<AvailableUpdate>> {
         }
     };
 
-    let tag = release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
+    let tag = release
+        .tag_name
+        .strip_prefix('v')
+        .unwrap_or(&release.tag_name);
     let latest: Version = match Version::parse(tag) {
         Ok(v) => v,
         Err(e) => {
@@ -190,9 +193,7 @@ pub async fn download_update(target: &str, tag: &str) -> Result<PathBuf> {
     let archive_name = format!("kaelo-{tag}-{target}.tar.gz");
     let checksum_name = format!("{archive_name}.sha256");
 
-    let base_url = format!(
-        "https://github.com/HachemiH/kaelo/releases/download/{tag}"
-    );
+    let base_url = format!("https://github.com/HachemiH/kaelo/releases/download/{tag}");
     let archive_url = format!("{base_url}/{archive_name}");
     let checksum_url = format!("{base_url}/{checksum_name}");
 
@@ -216,12 +217,7 @@ pub async fn download_update(target: &str, tag: &str) -> Result<PathBuf> {
     let archive_bytes = client.get(&archive_url).send().await?.bytes().await?;
     std::fs::write(&archive_path, &archive_bytes)?;
 
-    let checksum_text = client
-        .get(&checksum_url)
-        .send()
-        .await?
-        .text()
-        .await?;
+    let checksum_text = client.get(&checksum_url).send().await?.text().await?;
     std::fs::write(&checksum_path, &checksum_text)?;
 
     let expected_hash = checksum_text
@@ -230,7 +226,7 @@ pub async fn download_update(target: &str, tag: &str) -> Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("Empty checksum file"))?;
 
     let output = std::process::Command::new("shasum")
-        .args(["-a", "256",])
+        .args(["-a", "256"])
         .arg(&archive_path)
         .output()?;
 
@@ -245,15 +241,13 @@ pub async fn download_update(target: &str, tag: &str) -> Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("Empty shasum output"))?;
 
     if expected_hash != actual_hash {
-        anyhow::bail!(
-            "Checksum mismatch!\n  expected: {expected_hash}\n  actual:   {actual_hash}"
-        );
+        anyhow::bail!("Checksum mismatch!\n  expected: {expected_hash}\n  actual:   {actual_hash}");
     }
 
     let status = std::process::Command::new("tar")
-        .args(["xzf",])
+        .args(["xzf"])
         .arg(&archive_path)
-        .args(["-C",])
+        .args(["-C"])
         .arg(&tmp_path)
         .arg("kaelo")
         .status()?;
@@ -313,10 +307,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(".update-check");
         write_check_cache(&path).unwrap();
-        assert!(
-            !should_check(&path),
-            "Should NOT check when cache is fresh"
-        );
+        assert!(!should_check(&path), "Should NOT check when cache is fresh");
     }
 
     #[test]

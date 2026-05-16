@@ -576,7 +576,13 @@ fn content_cache_content_hash() {
     let content = "deterministic content for hash check";
 
     cache
-        .put(url, &Strategy::HttpSimple, content, "text/html", Duration::from_secs(3600))
+        .put(
+            url,
+            &Strategy::HttpSimple,
+            content,
+            "text/html",
+            Duration::from_secs(3600),
+        )
         .expect("put should succeed");
 
     let hash = cache
@@ -602,7 +608,13 @@ fn content_cache_content_hash_unchanged() {
     let content = "some content";
 
     cache
-        .put(url, &Strategy::HttpSimple, content, "text/html", Duration::from_secs(3600))
+        .put(
+            url,
+            &Strategy::HttpSimple,
+            content,
+            "text/html",
+            Duration::from_secs(3600),
+        )
         .expect("put should succeed");
 
     assert!(

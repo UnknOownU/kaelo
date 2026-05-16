@@ -73,10 +73,7 @@ fn test_get_any_returns_best_available() {
         .unwrap();
 
     // get_any returns content regardless of strategy
-    let result = cache
-        .get_any("https://example.com")
-        .unwrap()
-        .unwrap();
+    let result = cache.get_any("https://example.com").unwrap().unwrap();
     assert_eq!(result.content, "Headless content");
 
     // get_any returns None for unknown URL

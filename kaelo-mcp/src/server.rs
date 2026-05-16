@@ -161,7 +161,11 @@ fn resolve_strategy(storage: &Storage, url: &str) -> ResolvedStrategy {
     ResolvedStrategy { strategy }
 }
 
-fn check_content_cache(storage: &Storage, url: &str, strategy: Option<&Strategy>) -> Option<String> {
+fn check_content_cache(
+    storage: &Storage,
+    url: &str,
+    strategy: Option<&Strategy>,
+) -> Option<String> {
     let cache = ContentCache::new(storage);
     match strategy {
         Some(s) => cache.get(url, s).ok().flatten().map(|c| c.content),
@@ -181,7 +185,13 @@ fn store_and_record(
     status: u16,
 ) {
     let cache = ContentCache::new(storage);
-    let _ = cache.put(url, strategy, markdown, content_type, Duration::from_secs(3600));
+    let _ = cache.put(
+        url,
+        strategy,
+        markdown,
+        content_type,
+        Duration::from_secs(3600),
+    );
 
     let route_cache = RouteCache::new(storage);
     let _ = route_cache.upsert_strategy(
@@ -306,8 +316,8 @@ impl KaeloServer {
                         .unwrap_or_else(|| html.into_owned());
 
                     if is_content_valuable(&markdown) {
-                        let domain = extract_domain(&params.url)
-                            .unwrap_or_else(|_| "unknown".to_string());
+                        let domain =
+                            extract_domain(&params.url).unwrap_or_else(|_| "unknown".to_string());
                         {
                             let storage = self.state.storage.lock().map_err(internal_err)?;
                             store_and_record(
@@ -347,11 +357,8 @@ impl KaeloServer {
                                 continue;
                             }
                             None => {
-                                let result =
-                                    apply_token_budget(markdown, params.token_budget);
-                                return Ok(CallToolResult::success(vec![Content::text(
-                                    result,
-                                )]));
+                                let result = apply_token_budget(markdown, params.token_budget);
+                                return Ok(CallToolResult::success(vec![Content::text(result)]));
                             }
                         }
                     }
@@ -392,7 +399,10 @@ impl KaeloServer {
                                     return Err(internal_err(format!(
                                         "All fetch strategies exhausted for {}: {}",
                                         params.url,
-                                        last_error.as_ref().map(|s| s.as_str()).unwrap_or("unknown")
+                                        last_error
+                                            .as_ref()
+                                            .map(|s| s.as_str())
+                                            .unwrap_or("unknown")
                                     )));
                                 }
                             }
@@ -733,17 +743,20 @@ impl KaeloServer {
                         Ok(resp) => {
                             let latency_ms = start.elapsed().as_millis() as u64;
                             let body = String::from_utf8_lossy(&resp.body);
-                            let extracted = extraction::extract(&body, &result.url, &resp.content_type)
-                                .map_err(|e| internal_err(format!("extraction error: {e}")))?;
+                            let extracted =
+                                extraction::extract(&body, &result.url, &resp.content_type)
+                                    .map_err(|e| internal_err(format!("extraction error: {e}")))?;
 
                             let content = extracted
                                 .map(|e| e.text_content)
                                 .unwrap_or_else(|| body.into_owned());
 
                             if is_content_valuable(&content) {
-                                let domain = extract_domain(&result.url).unwrap_or_else(|_| "unknown".to_string());
+                                let domain = extract_domain(&result.url)
+                                    .unwrap_or_else(|_| "unknown".to_string());
                                 {
-                                    let storage = self.state.storage.lock().map_err(internal_err)?;
+                                    let storage =
+                                        self.state.storage.lock().map_err(internal_err)?;
                                     store_and_record(
                                         &storage,
                                         &result.url,
