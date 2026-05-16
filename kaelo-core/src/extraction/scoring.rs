@@ -4,7 +4,6 @@
 //! and returned sorted by relevance. Only sections with a positive score are
 //! included in the final output.
 
-/// A Markdown section split by heading boundaries.
 #[derive(Debug, Clone)]
 pub struct Section {
     /// Heading text (without the `#` prefix).
@@ -17,8 +16,6 @@ pub struct Section {
     pub score: f64,
 }
 
-/// Score sections by keyword overlap with focus terms.
-///
 /// Returns sections sorted by relevance score in descending order.
 /// Sections with zero relevance are still included so callers can decide
 /// the cutoff threshold.
@@ -42,7 +39,6 @@ pub fn score_sections(markdown: &str, focus: &str) -> Vec<Section> {
     scored
 }
 
-/// Tokenize a focus string into lowercase keywords.
 pub(crate) fn tokenize(text: &str) -> Vec<String> {
     text.to_lowercase()
         .split_whitespace()

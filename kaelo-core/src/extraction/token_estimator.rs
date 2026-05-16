@@ -8,11 +8,8 @@ impl TokenEstimator {
         (text.len() as u32) / 4
     }
 
-    /// Truncate Markdown content while preserving heading structure.
-    ///
-    /// Returns a tuple of (result, was_truncated). When truncation occurs,
-    /// a Table of Contents extracted from all headings is prepended to the
-    /// truncated content, giving the caller an overview of the full document.
+    /// When truncation occurs, a Table of Contents extracted from all headings
+    /// is prepended to the truncated content, giving the caller an overview of the full document.
     pub fn truncate_smart(text: &str, budget: u32) -> (String, bool) {
         let max_chars = (budget as usize) * 4;
         if text.len() <= max_chars {

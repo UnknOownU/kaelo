@@ -11,7 +11,6 @@ use crate::storage::route_cache::{FetchResult, RouteCache};
 use crate::storage::Storage;
 use crate::types::Strategy;
 
-/// The outcome of resolving a URL through the router.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RouterDecision {
     /// Known domain — a cached strategy with proven performance.
@@ -20,7 +19,6 @@ pub enum RouterDecision {
     Unknown { strategy: Strategy },
 }
 
-/// Maps a URL to the best fetch strategy by consulting the route cache.
 pub struct Router {
     storage: Arc<Storage>,
     default_strategy: Strategy,
@@ -138,7 +136,6 @@ impl Router {
     }
 }
 
-/// Extract the host from a URL using simple string parsing.
 fn extract_domain(url: &str) -> Result<String> {
     let no_proto = url
         .strip_prefix("https://")
@@ -178,7 +175,6 @@ mod tests {
     use std::pin::Pin;
     use std::time::Duration;
 
-    /// Seed the route cache with a strategy for the given domain.
     fn seed_strategy(
         storage: &Storage,
         domain: &str,
@@ -365,10 +361,6 @@ mod tests {
         let cache = RouteCache::new(&storage);
         assert_eq!(cache.count_entries().unwrap(), 1);
     }
-
-    // -----------------------------------------------------------------------
-    // resolve_with_probing tests
-    // -----------------------------------------------------------------------
 
     struct MockStrategyProber {
         responses: HashMap<String, Result<FetchResponse, FetchError>>,

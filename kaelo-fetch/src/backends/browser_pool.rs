@@ -67,10 +67,8 @@ struct Session {
     last_used: Instant,
 }
 
-/// A shared pool that lazily maintains a single Chrome browser instance.
-///
-/// The browser is launched on first use and reused across concurrent requests.
-/// If Chrome crashes, the next request automatically re-launches it.
+/// Lazily initialized — the browser is launched on first use and reused across
+/// concurrent requests. If Chrome crashes, the next request automatically re-launches it.
 ///
 /// `BrowserPool` is cheaply [`Clone`]able — all clones share the same
 /// underlying browser.
@@ -228,7 +226,6 @@ impl BrowserPool {
         }
     }
 
-    /// Gracefully shut down the pool, dropping the browser instance.
     pub async fn shutdown(&self) {
         let mut guard = self.slot.lock().await;
         *guard = None;

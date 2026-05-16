@@ -19,9 +19,6 @@ fn make_request(url: &str) -> FetchRequest {
     }
 }
 
-/// Given a browser pool, when fetching the same URL 50 times sequentially,
-/// then all requests succeed without panic or OOM, and pool-warm requests
-/// are not dramatically slower than the cold start.
 #[tokio::test]
 #[ignore = "requires Chromium"]
 async fn sequential_50_fetches_no_panic_or_oom() {
@@ -65,8 +62,6 @@ async fn sequential_50_fetches_no_panic_or_oom() {
     shutdown_browser_pool().await;
 }
 
-/// Given 10 different URLs, when fetching them all concurrently via the pool,
-/// then every request succeeds with status 200.
 #[tokio::test]
 #[ignore = "requires Chromium"]
 async fn concurrent_10_fetches_all_succeed() {
@@ -126,8 +121,6 @@ async fn concurrent_10_fetches_all_succeed() {
     shutdown_browser_pool().await;
 }
 
-/// Given a successful fetch, when the pool is shut down (simulating crash),
-/// then a subsequent fetch transparently re-launches Chrome and succeeds.
 #[tokio::test]
 #[ignore = "requires Chromium"]
 async fn crash_recovery_after_pool_shutdown() {

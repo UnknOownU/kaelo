@@ -60,7 +60,6 @@ fn sha256_hex(data: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// Extract the host/domain from a URL string using simple string parsing.
 /// Expects URLs like `https://example.com/path` → `example.com`.
 fn extract_domain(url: &str) -> Option<String> {
     let stripped = url
@@ -155,7 +154,6 @@ impl<'a> ContentCache<'a> {
         Ok(())
     }
 
-    /// Retrieve cached content for `url`.
     /// Returns `None` if not found or expired (TTL elapsed).
     pub fn get(&self, url: &str) -> Result<Option<CachedContent>> {
         let conn = self.storage.conn();
@@ -213,7 +211,6 @@ impl<'a> ContentCache<'a> {
         }))
     }
 
-    /// Remove a single URL from the cache.
     pub fn invalidate(&self, url: &str) -> Result<()> {
         self.storage
             .conn()
@@ -222,8 +219,6 @@ impl<'a> ContentCache<'a> {
         Ok(())
     }
 
-    /// Remove all cached entries for a given domain.
-    /// Returns the number of entries removed.
     pub fn clear_domain(&self, domain: &str) -> Result<u64> {
         let conn = self.storage.conn();
         let http_prefix = format!("http://{domain}%");
@@ -240,8 +235,6 @@ impl<'a> ContentCache<'a> {
         Ok((count1 + count2) as u64)
     }
 
-    /// Remove entries older than `duration`.
-    /// Returns the number of entries removed.
     pub fn clear_older_than(&self, duration: Duration) -> Result<u64> {
         let cutoff = epoch_now_secs()
             .saturating_sub(duration.as_secs())
@@ -254,7 +247,6 @@ impl<'a> ContentCache<'a> {
         Ok(count as u64)
     }
 
-    /// Remove all entries from the cache.
     pub fn clear_all(&self) -> Result<()> {
         self.storage
             .conn()
@@ -263,8 +255,6 @@ impl<'a> ContentCache<'a> {
         Ok(())
     }
 
-    /// Evict least-recently-used entries until total cache size < `max_size_bytes`.
-    /// Returns the number of entries evicted.
     pub fn evict_lru(&self, max_size_bytes: u64) -> Result<u64> {
         let conn = self.storage.conn();
 
@@ -306,7 +296,6 @@ impl<'a> ContentCache<'a> {
         Ok(evicted)
     }
 
-    /// Return statistics about the cache.
     pub fn stats(&self) -> Result<CacheStats> {
         let conn = self.storage.conn();
 
@@ -349,7 +338,6 @@ impl<'a> ContentCache<'a> {
         })
     }
 
-    /// Return the SHA-256 content hash for a cached URL, if it exists.
     pub fn content_hash(&self, url: &str) -> Result<Option<String>> {
         let result = self.storage.conn().query_row(
             "SELECT content_hash FROM url_cache WHERE url = ?1",
@@ -364,7 +352,6 @@ impl<'a> ContentCache<'a> {
         }
     }
 
-    /// Retrieve stored ETag/Last-Modified for conditional re-fetches.
     pub fn get_conditional_headers(&self, url: &str) -> Result<ConditionalHeaders> {
         let result = self.storage.conn().query_row(
             "SELECT etag, last_modified FROM url_cache WHERE url = ?1",
@@ -390,7 +377,6 @@ impl<'a> ContentCache<'a> {
         }
     }
 
-    /// Check if a newly computed hash matches the cached one.
     pub fn content_hash_unchanged(&self, url: &str, new_content: &str) -> Result<bool> {
         let new_hash = sha256_hex(new_content.as_bytes());
         match self.content_hash(url)? {
@@ -448,10 +434,6 @@ impl<'a> ContentCache<'a> {
         Ok(removed)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

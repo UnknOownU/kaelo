@@ -18,7 +18,6 @@ pub enum ProbeResult {
     Error { message: String },
 }
 
-/// Outcome of a multi-strategy probe for an unknown domain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StrategyProbeResult {
     /// The strategy that won the probe (lowest latency among successful).
@@ -27,11 +26,8 @@ pub struct StrategyProbeResult {
     pub latency_ms: u64,
 }
 
-/// Per-strategy timeout for probing.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Lightweight probe request backend.
-///
 /// Defined in `kaelo-core` so the router can use it without depending on
 /// `kaelo-fetch`. Concrete backends in `kaelo-fetch` implement this trait.
 pub trait Prober: Send + Sync {
@@ -41,8 +37,6 @@ pub trait Prober: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<FetchResponse, FetchError>> + Send + '_>>;
 }
 
-/// Extended prober that can try a specific strategy.
-///
 /// Each strategy variant gets its own method so the concrete implementation
 /// (in `kaelo-fetch`) can dispatch to the right backend.
 pub trait StrategyProber: Send + Sync {
@@ -74,8 +68,6 @@ pub async fn probe_domain(prober: &dyn Prober, url: &str) -> ProbeResult {
 /// Try multiple strategies in priority order and return the fastest successful
 /// one. Each strategy gets a 5-second timeout. The total probe is bounded by
 /// `strategies.len() * 5s`.
-///
-/// If all strategies fail, returns `None`.
 pub async fn probe_with_strategies(
     prober: &dyn StrategyProber,
     domain: &str,
@@ -445,10 +437,6 @@ mod tests {
             }
         );
     }
-
-    // -----------------------------------------------------------------------
-    // Multi-strategy probe tests
-    // -----------------------------------------------------------------------
 
     struct MockStrategyProber {
         responses: HashMap<String, Result<FetchResponse, FetchError>>,

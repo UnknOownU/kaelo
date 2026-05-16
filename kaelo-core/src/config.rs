@@ -129,7 +129,6 @@ impl Config {
         }
     }
 
-    /// Load config from a TOML file.
     /// Priority: env vars > config file > defaults.
     pub fn from_file(path: &std::path::Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
@@ -225,7 +224,6 @@ impl Config {
         Ok(config)
     }
 
-    /// Auto-discover config from `~/.config/kaelo/config.toml`.
     /// Falls back to `from_env()` if no config file exists.
     pub fn load() -> Self {
         let config_path = default_config_path();

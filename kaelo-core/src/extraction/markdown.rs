@@ -3,9 +3,7 @@
 /// Characters that should NOT be unescaped because they're meaningful in Markdown.
 const MD_SIGNIFICANT: &[char] = &['*', '_', '#', '[', ']', '\\', '`', '~'];
 
-/// Fix excessive backslash escaping from dom_smoothie.
-///
-/// Removes unnecessary `\` before common punctuation (`.`, `!`, `(`, `)`, `,`, `:`, `;`, `@`, `+`, `-`, `=`, `{`, `}`, `<`, `>`, `/`, `?`, `|`, `^`, `$`, `%`, `&`, `'`, `"`).
+/// Removes unnecessary `\` before common punctuation.
 /// Preserves backslashes before Markdown-significant characters.
 fn fix_excessive_backslashes(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
@@ -30,10 +28,7 @@ fn fix_excessive_backslashes(input: &str) -> String {
     result
 }
 
-/// Ensure `#` headings have a space after `#`.
-///
-/// `"##Title"` → `"## Title"`
-/// `"###Sub"` → `"### Sub"`
+/// `"##Title"` → `"## Title"`, `"###Sub"` → `"### Sub"`
 fn normalize_headings(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
@@ -121,7 +116,6 @@ fn collapse_blank_lines(input: &str) -> String {
     result
 }
 
-/// Post-process Markdown output from dom_smoothie to fix common issues.
 pub fn clean_markdown(input: &str) -> String {
     let mut output = input.to_string();
     output = fix_excessive_backslashes(&output);

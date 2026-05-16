@@ -80,7 +80,6 @@ pub struct FallbackChain {
 }
 
 impl FallbackChain {
-    /// Create a new fallback chain with the given maximum number of attempts.
     pub fn new(max_attempts: u32) -> Self {
         Self {
             max_attempts,
@@ -89,13 +88,11 @@ impl FallbackChain {
         }
     }
 
-    /// Record that a strategy was attempted.
     pub fn record_attempt(&mut self, strategy: &Strategy) {
         self.visited.insert(strategy.clone());
         self.attempts += 1;
     }
 
-    /// Get the next strategy to try, or `None` if exhausted.
     pub fn next(&self, current: &Strategy, error: &FetchError) -> Option<Strategy> {
         next_strategy(
             current,
@@ -106,12 +103,10 @@ impl FallbackChain {
         )
     }
 
-    /// Number of attempts made so far.
     pub fn attempts(&self) -> u32 {
         self.attempts
     }
 
-    /// Whether all attempts have been exhausted.
     pub fn is_exhausted(&self) -> bool {
         self.attempts >= self.max_attempts
     }

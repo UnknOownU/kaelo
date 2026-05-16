@@ -7,8 +7,6 @@ use super::Storage;
 
 const DEFAULT_MAX_ENTRIES: usize = 10_000;
 
-/// Read the configured max route cache entries from env var,
-/// falling back to the default.
 pub fn max_entries() -> usize {
     std::env::var("KAELO_MAX_ROUTE_ENTRIES")
         .ok()
@@ -201,7 +199,6 @@ impl<'a> RouteCache<'a> {
         Ok(())
     }
 
-    /// Evict entries that are old AND under-performing.
     pub fn evict_stale(
         &self,
         max_age_days: u32,
@@ -279,7 +276,6 @@ impl<'a> RouteCache<'a> {
         Ok(rows)
     }
 
-    /// Serialize all route cache entries to a JSON string.
     pub fn export_to_json(&self) -> Result<String> {
         let strategies = self.get_all_strategies()?;
 
@@ -309,7 +305,6 @@ impl<'a> RouteCache<'a> {
     }
 
     /// Deserialize entries from a JSON string and upsert them (merge with existing).
-    /// Returns the count of imported entries.
     pub fn import_from_json(&self, json: &str) -> Result<usize> {
         #[derive(serde::Deserialize)]
         #[allow(dead_code)]

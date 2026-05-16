@@ -37,7 +37,6 @@ impl Storage {
         Ok(Self { conn })
     }
 
-    /// Get a reference to the underlying connection.
     pub fn conn(&self) -> &rusqlite::Connection {
         &self.conn
     }

@@ -59,7 +59,6 @@ impl BoilerplateTracker {
         self.dirty.insert(domain.to_string(), true);
     }
 
-    /// Return `true` if `block` is classified as boilerplate for `domain`.
     pub fn is_boilerplate(&mut self, domain: &str, block: &str) -> bool {
         if block.len() > MAX_BLOCK_CHARS || block.trim().is_empty() {
             return false;
@@ -76,8 +75,6 @@ impl BoilerplateTracker {
             .unwrap_or(false)
     }
 
-    /// Remove all boilerplate blocks from `text` for the given `domain`.
-    ///
     /// Splits the text into lines, removes any line whose trimmed content
     /// matches a known boilerplate fingerprint, and reassembles.
     pub fn strip_boilerplate(&mut self, domain: &str, text: &str) -> String {
@@ -89,7 +86,6 @@ impl BoilerplateTracker {
         kept.join("\n")
     }
 
-    /// Get the number of boilerplate blocks known for a domain.
     pub fn boilerplate_count(&mut self, domain: &str) -> usize {
         if self.dirty.get(domain).copied().unwrap_or(false) {
             self.rebuild_boilerplate(domain);
@@ -97,7 +93,6 @@ impl BoilerplateTracker {
         self.boilerplate.get(domain).map(|s| s.len()).unwrap_or(0)
     }
 
-    /// Clear all tracking data for a domain.
     pub fn clear_domain(&mut self, domain: &str) {
         self.frequencies.remove(domain);
         self.boilerplate.remove(domain);
