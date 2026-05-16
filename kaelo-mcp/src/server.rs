@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::Result;
 use kaelo_core::extraction;
 use kaelo_core::extraction::quality::is_content_valuable;
+use kaelo_core::extraction::spa_detect;
 use kaelo_core::router::fallback::{classify_error, next_strategy, ErrorClass};
 use kaelo_core::search::ddg::DuckDuckGoBackend;
 use kaelo_core::search::searxng::SearXngBackend;
@@ -183,6 +184,7 @@ fn store_and_record(
     content_type: &str,
     latency_ms: u64,
     status: u16,
+    is_spa: bool,
 ) {
     let cache = ContentCache::new(storage);
     let _ = cache.put(
@@ -192,6 +194,18 @@ fn store_and_record(
         content_type,
         Duration::from_secs(3600),
     );
+
+    // Prevent cache poisoning: if the response is from a SPA domain but the
+    // strategy is NOT Headless, do not record this strategy as "successful"
+    // for the domain — it likely returned an empty JS shell, not real content.
+    if is_spa && *strategy != Strategy::Headless {
+        tracing::debug!(
+            domain,
+            strategy = ?strategy,
+            "Skipping route cache recording: SPA content with non-Headless strategy"
+        );
+        return;
+    }
 
     let route_cache = RouteCache::new(storage);
     let _ = route_cache.upsert_strategy(
@@ -311,9 +325,12 @@ impl KaeloServer {
                     let extracted = extraction::extract(&html, &params.url, &response.content_type)
                         .map_err(|e| internal_err(format!("extraction error: {e}")))?;
 
-                    let markdown = extracted
-                        .map(|e| e.text_content)
-                        .unwrap_or_else(|| html.into_owned());
+                    let markdown = match extracted {
+                        Some(e) if !e.text_content.trim().is_empty() => e.text_content,
+                        _ => String::new(),
+                    };
+
+                    let is_spa = spa_detect::detect_spa(&html).is_some();
 
                     if is_content_valuable(&markdown) {
                         let domain =
@@ -329,6 +346,7 @@ impl KaeloServer {
                                 &response.content_type,
                                 latency_ms,
                                 response.status,
+                                is_spa,
                             );
                         }
                         let result = apply_token_budget(markdown, params.token_budget);
@@ -339,6 +357,17 @@ impl KaeloServer {
                             strategy = ?current_strategy,
                             "Content not valuable enough to cache, trying next strategy"
                         );
+
+                        if is_spa && !visited.contains(&Strategy::Headless) {
+                            tracing::info!(
+                                url = %params.url,
+                                spa = ?spa_detect::detect_spa(&html),
+                                "SPA detected, skipping to Headless"
+                            );
+                            current_strategy = Strategy::Headless;
+                            continue;
+                        }
+
                         match next_strategy(
                             &current_strategy,
                             &visited,
@@ -357,7 +386,12 @@ impl KaeloServer {
                                 continue;
                             }
                             None => {
-                                let result = apply_token_budget(markdown, params.token_budget);
+                                let mut result = apply_token_budget(markdown, params.token_budget);
+                                let warning = format!(
+                                    "\n\n[Kaelo: unable to render JavaScript content for this URL. Tried: {} — none returned usable content.]",
+                                    visited.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", ")
+                                );
+                                result.push_str(&warning);
                                 return Ok(CallToolResult::success(vec![Content::text(result)]));
                             }
                         }
@@ -497,29 +531,44 @@ impl KaeloServer {
                                     tracing::info!(url = %url, strategy = ?current_strategy, latency_ms, "Batch fetch completed");
 
                                     let html = String::from_utf8_lossy(&response.body);
-                                    let extracted = match extraction::extract(&html, &url, &response.content_type) {
-                                        Ok(Some(e)) => e.text_content,
-                                        Ok(None) => html.into_owned(),
-                                        Err(e) => return format!("[extraction error for {url}: {e}]"),
+                                    let markdown = match extraction::extract(&html, &url, &response.content_type) {
+                                        Ok(Some(e)) if !e.text_content.trim().is_empty() => e.text_content,
+                                        _ => String::new(),
                                     };
 
-                                    if is_content_valuable(&extracted) {
+                                    if is_content_valuable(&markdown) {
                                         let domain = url.split('/').nth(2).unwrap_or("unknown").to_string();
+                                        let is_spa = spa_detect::detect_spa(&html).is_some();
                                         if let Ok(storage) = state.storage.lock() {
                                             store_and_record(
                                                 &storage,
                                                 &url,
                                                 &domain,
                                                 &current_strategy,
-                                                &extracted,
+                                                &markdown,
                                                 &response.content_type,
                                                 latency_ms,
                                                 response.status,
+                                                is_spa,
                                             );
                                         }
-                                        break extracted;
+                                        break markdown;
                                     } else {
                                         tracing::warn!(url = %url, strategy = ?current_strategy, "Content not valuable, trying next strategy");
+
+                                        if current_strategy != Strategy::Headless {
+                                            if let Some(framework) = spa_detect::detect_spa(&html) {
+                                                tracing::info!(
+                                                    url = %url,
+                                                    detected_framework = ?framework,
+                                                    "SPA detected, skipping to Headless"
+                                                );
+                                                visited.insert(Strategy::Headless);
+                                                current_strategy = Strategy::Headless;
+                                                continue;
+                                            }
+                                        }
+
                                         match next_strategy(
                                             &current_strategy,
                                             &visited,
@@ -532,7 +581,15 @@ impl KaeloServer {
                                                 current_strategy = next;
                                                 continue;
                                             }
-                                            None => break extracted,
+                                            None => {
+                                                let mut md = markdown;
+                                                let warning = format!(
+                                                    "\n\n[Kaelo: unable to render JavaScript content for this URL. Tried: {} — none returned usable content.]",
+                                                    visited.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", ")
+                                                );
+                                                md.push_str(&warning);
+                                                break md;
+                                            }
                                         }
                                     }
                                 }
@@ -740,6 +797,7 @@ impl KaeloServer {
                         Ok(resp) => {
                             let latency_ms = start.elapsed().as_millis() as u64;
                             let body = String::from_utf8_lossy(&resp.body);
+                            let is_spa = spa_detect::detect_spa(&body).is_some();
                             let extracted =
                                 extraction::extract(&body, &result.url, &resp.content_type)
                                     .map_err(|e| internal_err(format!("extraction error: {e}")))?;
@@ -763,6 +821,7 @@ impl KaeloServer {
                                         &resp.content_type,
                                         latency_ms,
                                         resp.status,
+                                        is_spa,
                                     );
                                 }
                             }
