@@ -1,7 +1,13 @@
 [package]
 name = "kaelo-cli"
-version = "0.2.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "CLI interface for Kaelo — intelligent web fetching for AI agents"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [[bin]]
 name = "kaelo"

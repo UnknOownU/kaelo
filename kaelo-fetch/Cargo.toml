@@ -1,7 +1,13 @@
 [package]
 name = "kaelo-fetch"
-version = "0.2.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Multi-strategy fetch backends for Kaelo — HTTP, TLS impersonation, headless browser"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 tokio = { workspace = true }

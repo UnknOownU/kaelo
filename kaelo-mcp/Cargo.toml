@@ -1,7 +1,13 @@
 [package]
 name = "kaelo-mcp"
-version = "0.2.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "MCP server for Kaelo — Model Context Protocol tools for AI agent integration"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 tokio = { workspace = true }

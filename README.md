@@ -2,9 +2,23 @@
 
 > Intelligent web fetching for AI agents. Local-first, token-aware, learns as it goes.
 
+[![CI](https://github.com/HachemiH/kaelo/actions/workflows/ci.yml/badge.svg)](https://github.com/HachemiH/kaelo/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.76%2B-orange.svg)](https://www.rust-lang.org/)
+[![MCP](https://img.shields.io/badge/MCP-2024--11--05-purple.svg)](https://modelcontextprotocol.io/)
+[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](https://github.com/HachemiH/kaelo/releases)
+
+**[Installation](#quick-start)** · **[Configuration](#configuration)** · **[Architecture](#how-it-works)** · **[MCP Tools](#mcp-tools)** · **[Contributing](#contributing)**
+
+---
+
+## Demo
+
+<!-- demo placeholder -->
+
 ## What is Kaelo?
 
-Kaelo is a Rust MCP server that gives AI agents (OpenCode, Claude Code, Cursor, etc.) reliable access to web content — even when sites try to block them.
+Kaelo is a Rust MCP server that gives AI agents (OpenCode, Claude Code, Cursor, etc.) reliable access to web content, even when sites try to block them.
 
 Unlike existing tools that brute-force every request with the same fallback chain, **Kaelo learns which strategy works for which domain** and gets faster over time.
 
@@ -60,33 +74,42 @@ Agent requests URL
 
 ## Quick Start
 
+**From source:**
+
 ```bash
-# Build from source
 git clone https://github.com/HachemiH/kaelo.git
 cd kaelo
 cargo install --path .
+```
 
-# Or install via Homebrew
+**One-liner:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HachemiH/kaelo/main/install.sh | bash
+```
+
+**Homebrew:**
+
+```bash
 brew install --build-from-source packaging/homebrew/kaelo.rb
+```
 
-# Optional: for JS-heavy SPA sites (RSI Galactapedia, Bloomberg, etc.)
+**Optional** — for JS-heavy SPA sites (RSI Galactapedia, Bloomberg, etc.):
+
+```bash
 brew install --cask chromium
 xattr -cr /Applications/Chromium.app  # macOS Gatekeeper fix
 ```
 
-### CLI Commands
+Verify it works:
 
 ```bash
-kaelo serve            # Start MCP server (for agent integration)
-kaelo fetch <url>      # Fetch a URL and print extracted Markdown
-kaelo prove-it         # Run self-test to verify installation
-kaelo cache status     # Show cache size, entries, top domains
-kaelo cache clear      # Clear everything
-kaelo cache clear --domain X    # Clear specific domain
-kaelo cache clear --older-than 24h  # Clear old entries
+kaelo prove-it
 ```
 
-### MCP Configuration
+## MCP Client Setup
+
+Kaelo runs as an MCP server over stdio. Add it to your agent's config and it auto-starts with your session.
 
 **OpenCode** (`opencode.json`):
 
@@ -127,75 +150,44 @@ kaelo cache clear --older-than 24h  # Clear old entries
 }
 ```
 
-**Windsurf** (`.windsurf/mcp.json`):
-
-```jsonc
-{
-  "mcpServers": {
-    "kaelo": {
-      "command": "kaelo",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-That's it. Kaelo auto-starts with your agent session.
-
 ## MCP Tools
 
-**Available (v0.2):**
-
-| Tool | Description | Key Parameters |
+| Tool | Description | Parameters |
 |---|---|---|
-| `web_fetch` | Fetch a URL, return clean Markdown | url, strategy, token_budget, focus, no_cache |
-| `web_search` | Search DuckDuckGo (or SearXNG), optionally fetch top results | query, max_results, fetch_content |
-| `fetch_urls` | Batch fetch multiple URLs in one call | urls (max 10), strategy, token_budget |
-| `cache_status` | Show cache statistics | — |
-| `cache_clear` | Clear cached content | — |
-| `ping` | Health check — returns pong | — |
+| `web_fetch` | Fetch a URL and return clean Markdown | `url`, `strategy`, `token_budget`, `focus`, `no_cache`, `session` |
+| `web_search` | Search the web, optionally fetch top results | `query`, `max_results`, `fetch_content` |
+| `fetch_urls` | Batch fetch up to 10 URLs in one call | `urls`, `strategy`, `token_budget` |
+| `ping` | Health check, returns pong | — |
 
-## Backends
+### Tool details
 
-| Strategy | Backend | Use Case |
+**`web_fetch`** — the primary tool. Fetches a URL and returns extracted Markdown content. Supports CSS selector focusing (`focus`), token budget limits, browser sessions for cookie-aware navigation, and cache bypass.
+
+**`web_search`** — searches DuckDuckGo (or a self-hosted SearXNG instance) and returns results. Set `fetch_content: true` to automatically fetch the top result's full content in a single call.
+
+**`fetch_urls`** — parallel batch fetch. Pass up to 10 URLs and get combined Markdown output separated by `---`. Each URL can have its own token budget.
+
+## Fetch Strategies
+
+Kaelo auto-selects the best strategy per domain using its route cache. You can also force a specific strategy via the `strategy` parameter.
+
+| Strategy | Backend | When to use |
 |---|---|---|
-| `HttpSimple` | reqwest | Static sites, APIs |
-| `TlsChrome` | wreq (TLS impersonation) | Cloudflare-protected sites |
-| `TlsMobile` | wreq (mobile TLS) | Sites that block desktop bots |
-| `Headless` | chromiumoxide | JS-heavy SPAs (React, Next.js, Vue) |
-| `PublicApi` | native HTTP | Reddit, HN, YouTube native APIs |
+| `HttpSimple` | reqwest | Static sites, APIs, most pages. The default for unknown domains. |
+| `TlsChrome` | wreq (TLS impersonation) | Cloudflare-protected sites, bot-detection pages. |
+| `TlsMobile` | wreq (mobile TLS) | Sites that block desktop bots but allow mobile traffic. |
+| `Headless` | chromiumoxide | JS-heavy SPAs (React, Next.js, Vue, Blazor). Requires Chromium. |
+| `PublicApi` | native HTTP | Reddit, Hacker News, YouTube. Uses native APIs for structured data. |
 
-Kaelo auto-selects the best strategy per domain using its route cache. You can force a specific strategy via the `strategy` parameter:
-
-```json
-{"url": "https://example.com", "strategy": "Headless"}
-```
-
-**Headless browser** requires Chromium installed locally:
-```bash
-brew install --cask chromium
-xattr -cr /Applications/Chromium.app
-```
-
-## Cache Management
-
-```bash
-kaelo cache status              # Show cache size, entries, top domains
-kaelo cache clear               # Clear everything
-kaelo cache clear --domain X    # Clear specific domain
-kaelo cache clear --older-than 24h  # Clear old entries
-kaelo cache export <path>       # Export route cache to JSON
-kaelo cache import <path>       # Import route cache from JSON
-kaelo cache show-auth           # Show stored per-domain auth
-kaelo cache forget-auth <domain> # Remove stored auth for a domain
-```
+Leave `strategy` empty to let Kaelo auto-detect. It probes on the first visit and caches the result for subsequent requests.
 
 ## Configuration
 
-Via environment variables or TOML config file (`~/.config/kaelo/config.toml`):
+### Config file
+
+`~/.config/kaelo/config.toml` (created automatically on first run):
 
 ```toml
-# ~/.config/kaelo/config.toml
 cache_enabled = true
 cache_max_size = 52428800   # 50 MB
 cache_max_entry = 102400    # 100 KB per entry
@@ -203,16 +195,81 @@ cache_ttl = 3600            # 1 hour
 cache_compression = "gzip"
 db_path = "~/.config/kaelo/kaelo.db"
 log_level = "info"
+
+# Optional: self-hosted search backend
+# searxng_url = "http://localhost:8888"
+# search_backend = "searxng"
+
+# Optional: override default strategy for all requests
+# default_strategy = "HttpSimple"
 ```
 
-Environment variables (override config file):
+### Environment variables
+
+Environment variables override config file values:
 
 ```
-KAELO_CACHE_ENABLED=true        # Master cache switch
-KAELO_CACHE_MAX_SIZE=52428800   # 50 MB hard limit
-KAELO_CACHE_TTL=3600            # 1 hour default TTL
-KAELO_CACHE_COMPRESSION=gzip    # Compress cached content
+KAELO_CACHE_ENABLED=true          # Master cache switch
+KAELO_CACHE_MAX_SIZE=52428800     # 50 MB hard limit
+KAELO_CACHE_TTL=3600              # 1 hour default TTL
+KAELO_CACHE_COMPRESSION=gzip      # Compress cached content
+KAELO_SEARXNG_URL=http://...      # SearXNG instance URL
+KAELO_SEARCH_BACKEND=searxng      # "duckduckgo" (default) or "searxng"
+KAELO_LOG_LEVEL=debug             # log level
 ```
+
+### Per-domain auth
+
+For sites that require authentication, set environment variables with the domain:
+
+```bash
+# Bearer token for a private GitHub repo
+KAELO_AUTH_GITHUB_COM="Bearer: ghp_xxxxxxxxxxxx"
+
+# Basic auth for a staging site
+KAELO_AUTH_STAGING_EXAMPLE_COM="Basic: user:pass"
+
+# Custom header
+KAELO_AUTH_API_EXAMPLE_COM="Header: X-API-Key: xxx"
+```
+
+### CLI commands
+
+```bash
+kaelo serve              # Start MCP server (stdio transport)
+kaelo fetch <url>        # Fetch a URL and print extracted Markdown
+kaelo prove-it           # Run self-test to verify installation
+kaelo prove-it --challenge  # Test against a Cloudflare-protected URL
+kaelo cache status       # Show cache size, entries, top domains
+kaelo cache clear        # Clear everything
+kaelo cache clear --domain X     # Clear specific domain
+kaelo cache clear --older-than 24h  # Clear old entries
+kaelo cache export <path>       # Export route cache strategies to JSON
+kaelo cache import <path>       # Import route cache strategies from JSON
+kaelo cache import-pack <path>  # Import community route pack
+kaelo cache show-auth           # Show stored per-domain auth (tokens redacted)
+kaelo cache forget-auth <domain> # Remove stored auth for a domain
+```
+
+## Architecture
+
+Kaelo is structured as a Rust workspace with four crates:
+
+- **`kaelo-core`** — routing, caching (SQLite), search backends, content extraction, config
+- **`kaelo-fetch`** — fetch backends (HTTP, TLS impersonation, headless browser, public APIs)
+- **`kaelo-mcp`** — MCP server with tool definitions and stdio transport
+- **`kaelo-cli`** — CLI interface using clap
+
+### Documentation
+
+- [Getting Started](./docs/getting-started.md) — install, configure, first run
+- [Configuration](./docs/configuration.md) — all config options and env vars
+- [Architecture](./docs/architecture.md) — technical deep-dive
+- [MCP Tools](./docs/mcp-tools.md) — complete tool reference
+
+The route cache sits at the center. On the first request to a domain, Kaelo probes strategies (fastest first) and caches the winner. On every subsequent request, it goes straight to the known-good strategy, cutting latency from ~8s to ~1.5s.
+
+252 tests.
 
 ## Competitive Landscape
 
@@ -227,26 +284,10 @@ KAELO_CACHE_COMPRESSION=gzip    # Compress cached content
 | **Token-aware** | ✅ budget, focus | ❌ | ✅ content scoring | ❌ |
 | **Local & free** | ✅ MIT | ✅ MIT | ✅ MIT | ✅ MIT |
 
-## v0.2 Features
+## Contributing
 
-| Feature | Description |
-|---|---|
-| Smart truncation | Section-aware content truncation that preserves important content |
-| Config TOML | Full configuration via `~/.config/kaelo/config.toml` |
-| Browser pooling | Reusable browser instances with anti-bot fingerprinting (realistic UAs, random viewports, webdriver stealth) |
-| Route cache export/import | Share learned strategies between machines via JSON export/import |
-| Smart probing | Intelligent strategy probing with domain-scoped learning |
-| Batch fetch | Fetch up to 10 URLs in a single MCP call via `fetch_urls` |
-| SearXNG backend | Optional SearXNG search backend (falls back to DuckDuckGo) |
-| TLS impersonation | `TlsChrome` and `TlsMobile` strategies for anti-bot bypass |
-| Public API backend | Native API backends for Reddit, HN, YouTube |
-
-## Status
-
-**Beta (v0.2).** Multi-strategy fetching (HTTP, TLS impersonation, headless browser), public API backends, route cache with export/import, batch fetch, SearXNG search, anti-bot fingerprinting, content cache, web search, MCP server, CLI — all functional.
-
-See [PRD.md](./PRD.md) for full product vision.
+Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT
+[MIT](./LICENSE)

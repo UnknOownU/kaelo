@@ -1,0 +1,100 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in Kaelo
+labels: ["bug"]
+assignees: []
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Kaelo version
+      description: Which version of Kaelo are you running?
+      placeholder: "0.2.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS / Platform
+      description: Which operating system are you running on?
+      options:
+        - macOS ARM (Apple Silicon)
+        - macOS Intel
+        - Linux x86_64
+        - Linux ARM64
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: MCP client
+      description: Which MCP client are you using with Kaelo?
+      options:
+        - OpenCode
+        - Claude Code
+        - Cursor
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce this issue?
+      placeholder: |
+        1. Configure Kaelo with...
+        2. Request this URL...
+        3. Observe...
+    validations:
+      required: true
+
+  - type: textarea
+    id: strategy
+    attributes:
+      label: Fetch strategy
+      description: Which fetch strategy were you using? (Leave as Auto if unsure)
+    validations:
+      required: false
+
+  - type: dropdown
+    id: fetch-strategy
+    attributes:
+      label: Fetch strategy used
+      description: Which fetch strategy was involved?
+      options:
+        - Auto
+        - HttpSimple
+        - TlsChrome
+        - TlsMobile
+        - Headless
+        - PublicApi
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: Paste any relevant logs, error messages, or stack traces here.
+      render: shell
+    validations:
+      required: false

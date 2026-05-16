@@ -7,6 +7,15 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.76"
+license = "MIT"
+repository = "https://github.com/HachemiH/kaelo"
+keywords = ["mcp", "web-fetching", "ai-agent", "web-scraping"]
+categories = ["web-programming", "command-line-utilities"]
+
 [workspace.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "signal"] }
 serde = { version = "1", features = ["derive"] }

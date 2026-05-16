@@ -1,7 +1,37 @@
-target/
+# Rust
+/target/
+**/*.rs.bk
+
+# Build
+*.d
+*.rlib
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+PRD.md
 .sisyphus/
+
+# Database
 *.db
 *.db-shm
 *.db-wal
+
+# Config
 .env
 config.toml
+
+# Runtime
+*.log
+
+# Demo
+demo.cast
