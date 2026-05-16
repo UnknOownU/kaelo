@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.76%2B-orange.svg)](https://www.rust-lang.org/)
 [![MCP](https://img.shields.io/badge/MCP-2024--11--05-purple.svg)](https://modelcontextprotocol.io/)
-[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](https://github.com/HachemiH/kaelo/releases)
+[![Version](https://img.shields.io/badge/version-0.3.0-green.svg)](https://github.com/HachemiH/kaelo/releases)
 
 **[Installation](#quick-start)** · **[Configuration](#configuration)** · **[Architecture](#how-it-works)** · **[MCP Tools](#mcp-tools)** · **[Contributing](#contributing)**
 

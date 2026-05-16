@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-05-16
+
+### Added
+- `kaelo update` command: check for newer versions and self-update from GitHub releases
+- `kaelo update --check`: check only, don't install
+- `kaelo update --force`: reinstall even if already up-to-date
+- Startup version check in `kaelo serve`: non-blocking notification when a new version is available (24h cache)
+- Version info in MCP `ping` response (JSON with status and version fields)
+- Install method detection: refuses self-update for Homebrew/Cargo installs with helpful message
+- `kaelo-core::update` module: GitHub releases API integration, SHA256 checksum verification, binary extraction
+
+### Fixed
+- Content cache now keyed by (URL, strategy) — each fetch strategy gets its own cache entry, preventing cross-strategy pollution
+- Fallback chain is now active in all MCP handlers (web_fetch, fetch_urls, web_search) — retries with next strategy on 403/timeout
+- Content quality validation gate: content < 50 chars or < 3 non-empty lines is rejected and triggers fallback
+- PublicApi added to fallback chain (5th position, last resort)
+- Terminal errors (404, 429) return immediately without retry
+
+### Changed
+- `reqwest` promoted to workspace-shared dependency
+- Added `semver` crate for proper version comparison
+
+### Technical
+- 272 tests (9 new for update module, 5 new integration tests for cache routing)
+- SQLite migration V003: composite primary key (url, strategy) on url_cache table
+- AI slop cleanup across codebase
+
 ## [0.2.0] - 2025-05-16
 
 ### Added
