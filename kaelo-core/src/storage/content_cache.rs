@@ -8,6 +8,17 @@ use flate2::Compression;
 use sha2::{Digest, Sha256};
 
 use super::Storage;
+use crate::types::Strategy;
+
+fn strategy_key(strategy: &Strategy) -> &'static str {
+    match strategy {
+        Strategy::HttpSimple => "HttpSimple",
+        Strategy::TlsChrome => "TlsChrome",
+        Strategy::TlsMobile => "TlsMobile",
+        Strategy::Headless => "Headless",
+        Strategy::PublicApi => "PublicApi",
+    }
+}
 
 const MAX_ENTRY_SIZE: usize = 100 * 1024; // 100 KB
 
@@ -26,6 +37,7 @@ pub struct CachedContent {
     pub original_size: usize,
     pub age_seconds: u64,
     pub from_cache: bool,
+    pub strategy: String,
 }
 
 #[derive(Debug, Clone)]
@@ -103,13 +115,14 @@ impl<'a> ContentCache<'a> {
         Self { storage }
     }
 
-    pub fn put(&self, url: &str, content: &str, content_type: &str, ttl: Duration) -> Result<()> {
-        self.put_with_conditional(url, content, content_type, ttl, None)
+    pub fn put(&self, url: &str, strategy: &Strategy, content: &str, content_type: &str, ttl: Duration) -> Result<()> {
+        self.put_with_conditional(url, strategy, content, content_type, ttl, None)
     }
 
     pub fn put_with_conditional(
         &self,
         url: &str,
+        strategy: &Strategy,
         content: &str,
         content_type: &str,
         ttl: Duration,
@@ -133,11 +146,12 @@ impl<'a> ContentCache<'a> {
             .conn()
             .execute(
                 "INSERT OR REPLACE INTO url_cache
-                (url, content_hash, compressed_content, content_type, original_size,
+                (url, strategy, content_hash, compressed_content, content_type, original_size,
                  created_at, last_accessed_at, expires_at, etag, last_modified)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 rusqlite::params![
                     url,
+                    strategy_key(strategy),
                     content_hash,
                     compressed,
                     content_type,
@@ -155,15 +169,15 @@ impl<'a> ContentCache<'a> {
     }
 
     /// Returns `None` if not found or expired (TTL elapsed).
-    pub fn get(&self, url: &str) -> Result<Option<CachedContent>> {
+    pub fn get(&self, url: &str, strategy: &Strategy) -> Result<Option<CachedContent>> {
         let conn = self.storage.conn();
         let mut stmt = conn.prepare(
             "SELECT content_hash, compressed_content, content_type, original_size,
-                    created_at, expires_at
-             FROM url_cache WHERE url = ?1",
+                    created_at, expires_at, strategy
+             FROM url_cache WHERE url = ?1 AND strategy = ?2",
         )?;
 
-        let row_result = stmt.query_row([url], |row| {
+        let row_result = stmt.query_row(rusqlite::params![url, strategy_key(strategy)], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, Vec<u8>>(1)?,
@@ -171,10 +185,11 @@ impl<'a> ContentCache<'a> {
                 row.get::<_, i64>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
             ))
         });
 
-        let (content_hash, compressed, content_type, original_size, created_at, expires_at) =
+        let (content_hash, compressed, content_type, original_size, created_at, expires_at, cached_strategy) =
             match row_result {
                 Ok(r) => r,
                 Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
@@ -184,7 +199,7 @@ impl<'a> ContentCache<'a> {
         let now_secs = epoch_now_secs();
         let expires_secs = epoch_from_iso(&expires_at);
         if now_secs >= expires_secs {
-            let _ = self.invalidate(url);
+            let _ = self.invalidate(url, Some(strategy));
             return Ok(None);
         }
 
@@ -194,8 +209,8 @@ impl<'a> ContentCache<'a> {
 
         // Touch last_accessed_at (LRU)
         conn.execute(
-            "UPDATE url_cache SET last_accessed_at = ?1 WHERE url = ?2",
-            rusqlite::params![now_iso(), url],
+            "UPDATE url_cache SET last_accessed_at = ?1 WHERE url = ?2 AND strategy = ?3",
+            rusqlite::params![now_iso(), url, strategy_key(strategy)],
         )?;
 
         let created_secs = epoch_from_iso(&created_at);
@@ -208,14 +223,90 @@ impl<'a> ContentCache<'a> {
             original_size: original_size as usize,
             age_seconds,
             from_cache: true,
+            strategy: cached_strategy,
         }))
     }
 
-    pub fn invalidate(&self, url: &str) -> Result<()> {
-        self.storage
-            .conn()
-            .execute("DELETE FROM url_cache WHERE url = ?1", [url])
-            .context("failed to delete from url_cache")?;
+    /// Returns the best available cached content for a URL regardless of strategy.
+    pub fn get_any(&self, url: &str) -> Result<Option<CachedContent>> {
+        let conn = self.storage.conn();
+        let mut stmt = conn.prepare(
+            "SELECT content_hash, compressed_content, content_type, original_size,
+                    created_at, expires_at, strategy
+             FROM url_cache WHERE url = ?1 ORDER BY created_at DESC LIMIT 1",
+        )?;
+
+        let row_result = stmt.query_row([url], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+            ))
+        });
+
+        let (content_hash, compressed, content_type, original_size, created_at, expires_at, cached_strategy) =
+            match row_result {
+                Ok(r) => r,
+                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+                Err(e) => return Err(e).context("failed to query url_cache"),
+            };
+
+        let now_secs = epoch_now_secs();
+        let expires_secs = epoch_from_iso(&expires_at);
+        if now_secs >= expires_secs {
+            let _ = self.invalidate(url, None);
+            return Ok(None);
+        }
+
+        let decompressed = gzip_decompress(&compressed)?;
+        let content =
+            String::from_utf8(decompressed).context("cached content is not valid UTF-8")?;
+
+        // Touch last_accessed_at (LRU)
+        conn.execute(
+            "UPDATE url_cache SET last_accessed_at = ?1 WHERE url = ?2 AND strategy = ?3",
+            rusqlite::params![now_iso(), url, &cached_strategy],
+        )?;
+
+        let created_secs = epoch_from_iso(&created_at);
+        let age_seconds = now_secs.saturating_sub(created_secs);
+
+        Ok(Some(CachedContent {
+            content,
+            content_hash,
+            content_type,
+            original_size: original_size as usize,
+            age_seconds,
+            from_cache: true,
+            strategy: cached_strategy,
+        }))
+    }
+
+    pub fn invalidate(&self, url: &str, strategy: Option<&Strategy>) -> Result<()> {
+        match strategy {
+            Some(s) => {
+                self.storage
+                    .conn()
+                    .execute(
+                        "DELETE FROM url_cache WHERE url = ?1 AND strategy = ?2",
+                        rusqlite::params![url, strategy_key(s)],
+                    )
+                    .context("failed to delete from url_cache")?;
+            }
+            None => {
+                self.storage
+                    .conn()
+                    .execute(
+                        "DELETE FROM url_cache WHERE url = ?1",
+                        rusqlite::params![url],
+                    )
+                    .context("failed to delete from url_cache")?;
+            }
+        }
         Ok(())
     }
 
@@ -271,12 +362,12 @@ impl<'a> ContentCache<'a> {
         }
 
         let mut stmt = conn.prepare(
-            "SELECT url, LENGTH(compressed_content) FROM url_cache ORDER BY last_accessed_at ASC",
+            "SELECT url, strategy, LENGTH(compressed_content) FROM url_cache ORDER BY last_accessed_at ASC",
         )?;
 
-        let entries: Vec<(String, i64)> = stmt
+        let entries: Vec<(String, String, i64)> = stmt
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -284,11 +375,14 @@ impl<'a> ContentCache<'a> {
         let mut freed: i64 = 0;
         let target_free = (total_size as u64) - max_size_bytes;
 
-        for (url, size) in entries {
+        for (url, strategy, size) in entries {
             if (freed as u64) >= target_free {
                 break;
             }
-            conn.execute("DELETE FROM url_cache WHERE url = ?1", [&url])?;
+            conn.execute(
+                "DELETE FROM url_cache WHERE url = ?1 AND strategy = ?2",
+                rusqlite::params![url, strategy],
+            )?;
             freed += size;
             evicted += 1;
         }
@@ -300,7 +394,7 @@ impl<'a> ContentCache<'a> {
         let conn = self.storage.conn();
 
         let entry_count: u64 = conn
-            .query_row("SELECT COUNT(*) FROM url_cache", [], |row| {
+            .query_row("SELECT COUNT(DISTINCT url) FROM url_cache", [], |row| {
                 row.get::<_, i64>(0)
             })
             .map(|c| c as u64)?;
@@ -338,10 +432,10 @@ impl<'a> ContentCache<'a> {
         })
     }
 
-    pub fn content_hash(&self, url: &str) -> Result<Option<String>> {
+    pub fn content_hash(&self, url: &str, strategy: &Strategy) -> Result<Option<String>> {
         let result = self.storage.conn().query_row(
-            "SELECT content_hash FROM url_cache WHERE url = ?1",
-            [url],
+            "SELECT content_hash FROM url_cache WHERE url = ?1 AND strategy = ?2",
+            rusqlite::params![url, strategy_key(strategy)],
             |row| row.get::<_, String>(0),
         );
 
@@ -352,10 +446,10 @@ impl<'a> ContentCache<'a> {
         }
     }
 
-    pub fn get_conditional_headers(&self, url: &str) -> Result<ConditionalHeaders> {
+    pub fn get_conditional_headers(&self, url: &str, strategy: &Strategy) -> Result<ConditionalHeaders> {
         let result = self.storage.conn().query_row(
-            "SELECT etag, last_modified FROM url_cache WHERE url = ?1",
-            [url],
+            "SELECT etag, last_modified FROM url_cache WHERE url = ?1 AND strategy = ?2",
+            rusqlite::params![url, strategy_key(strategy)],
             |row| {
                 Ok((
                     row.get::<_, Option<String>>(0)?,
@@ -377,9 +471,9 @@ impl<'a> ContentCache<'a> {
         }
     }
 
-    pub fn content_hash_unchanged(&self, url: &str, new_content: &str) -> Result<bool> {
+    pub fn content_hash_unchanged(&self, url: &str, strategy: &Strategy, new_content: &str) -> Result<bool> {
         let new_hash = sha256_hex(new_content.as_bytes());
-        match self.content_hash(url)? {
+        match self.content_hash(url, strategy)? {
             Some(cached_hash) => Ok(cached_hash == new_hash),
             None => Ok(false),
         }
@@ -416,17 +510,22 @@ impl<'a> ContentCache<'a> {
         for (hash, _count) in &duplicates {
             // Keep the most recently accessed entry, delete the rest.
             let mut stmt2 = conn.prepare(
-                "SELECT url FROM url_cache
+                "SELECT url, strategy FROM url_cache
                  WHERE content_hash = ?1
                  ORDER BY last_accessed_at ASC",
             )?;
-            let urls: Vec<String> = stmt2
-                .query_map([hash], |row| row.get::<_, String>(0))?
+            let rows: Vec<(String, String)> = stmt2
+                .query_map([hash], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
                 .collect::<Result<Vec<_>, _>>()?;
 
-            let to_delete = urls.len().saturating_sub(1);
-            for url in urls.iter().take(to_delete) {
-                conn.execute("DELETE FROM url_cache WHERE url = ?1", [url])?;
+            let to_delete = rows.len().saturating_sub(1);
+            for (url, strategy) in rows.iter().take(to_delete) {
+                conn.execute(
+                    "DELETE FROM url_cache WHERE url = ?1 AND strategy = ?2",
+                    rusqlite::params![url, strategy],
+                )?;
                 removed += 1;
             }
         }
@@ -447,6 +546,8 @@ mod tests {
         ContentCache::new(storage)
     }
 
+    const TEST_STRATEGY: Strategy = Strategy::HttpSimple;
+
     #[test]
     fn test_put_and_get() {
         let cache = make_cache();
@@ -455,13 +556,14 @@ mod tests {
         cache
             .put(
                 "https://example.com/page1",
+                &TEST_STRATEGY,
                 html,
                 "text/html",
                 Duration::from_secs(3600),
             )
             .unwrap();
 
-        let result = cache.get("https://example.com/page1").unwrap();
+        let result = cache.get("https://example.com/page1", &TEST_STRATEGY).unwrap();
         assert!(result.is_some(), "should find cached entry");
 
         let cached = result.unwrap();
@@ -479,6 +581,7 @@ mod tests {
         cache
             .put(
                 "https://example.com/hash",
+                &TEST_STRATEGY,
                 html,
                 "text/html",
                 Duration::from_secs(3600),
@@ -487,10 +590,10 @@ mod tests {
 
         let expected_hash = sha256_hex(html.as_bytes());
 
-        let cached = cache.get("https://example.com/hash").unwrap().unwrap();
+        let cached = cache.get("https://example.com/hash", &TEST_STRATEGY).unwrap().unwrap();
         assert_eq!(cached.content_hash, expected_hash);
 
-        let hash = cache.content_hash("https://example.com/hash").unwrap();
+        let hash = cache.content_hash("https://example.com/hash", &TEST_STRATEGY).unwrap();
         assert_eq!(hash, Some(expected_hash));
     }
 
@@ -501,17 +604,18 @@ mod tests {
         cache
             .put(
                 "https://example.com/ttl",
+                &TEST_STRATEGY,
                 "short-lived",
                 "text/plain",
                 Duration::from_secs(1),
             )
             .unwrap();
 
-        assert!(cache.get("https://example.com/ttl").unwrap().is_some());
+        assert!(cache.get("https://example.com/ttl", &TEST_STRATEGY).unwrap().is_some());
 
         thread::sleep(Duration::from_millis(1100));
 
-        assert!(cache.get("https://example.com/ttl").unwrap().is_none());
+        assert!(cache.get("https://example.com/ttl", &TEST_STRATEGY).unwrap().is_none());
     }
 
     #[test]
@@ -525,6 +629,7 @@ mod tests {
         cache
             .put(
                 "https://example.com/compress",
+                &TEST_STRATEGY,
                 &html,
                 "text/html",
                 Duration::from_secs(3600),
@@ -534,8 +639,8 @@ mod tests {
         let conn = cache.storage.conn();
         let compressed_size: i64 = conn
             .query_row(
-                "SELECT LENGTH(compressed_content) FROM url_cache WHERE url = ?1",
-                ["https://example.com/compress"],
+                "SELECT LENGTH(compressed_content) FROM url_cache WHERE url = ?1 AND strategy = ?2",
+                rusqlite::params!["https://example.com/compress", strategy_key(&TEST_STRATEGY)],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap();
@@ -547,7 +652,7 @@ mod tests {
             html.len(),
         );
 
-        let cached = cache.get("https://example.com/compress").unwrap().unwrap();
+        let cached = cache.get("https://example.com/compress", &TEST_STRATEGY).unwrap().unwrap();
         assert_eq!(cached.content, html);
     }
 
@@ -561,6 +666,7 @@ mod tests {
             cache
                 .put(
                     &format!("https://example.com/page/{i}"),
+                    &TEST_STRATEGY,
                     &content,
                     "text/html",
                     Duration::from_secs(3600),
@@ -581,8 +687,8 @@ mod tests {
         let stats_after = cache.stats().unwrap();
         assert!(stats_after.entry_count < 10);
 
-        assert!(cache.get("https://example.com/page/0").unwrap().is_none());
-        assert!(cache.get("https://example.com/page/1").unwrap().is_none());
+        assert!(cache.get("https://example.com/page/0", &TEST_STRATEGY).unwrap().is_none());
+        assert!(cache.get("https://example.com/page/1", &TEST_STRATEGY).unwrap().is_none());
     }
 
     #[test]
@@ -592,16 +698,17 @@ mod tests {
         cache
             .put(
                 "https://example.com/inv",
+                &TEST_STRATEGY,
                 "to-be-removed",
                 "text/plain",
                 Duration::from_secs(3600),
             )
             .unwrap();
 
-        assert!(cache.get("https://example.com/inv").unwrap().is_some());
+        assert!(cache.get("https://example.com/inv", &TEST_STRATEGY).unwrap().is_some());
 
-        cache.invalidate("https://example.com/inv").unwrap();
-        assert!(cache.get("https://example.com/inv").unwrap().is_none());
+        cache.invalidate("https://example.com/inv", Some(&TEST_STRATEGY)).unwrap();
+        assert!(cache.get("https://example.com/inv", &TEST_STRATEGY).unwrap().is_none());
     }
 
     #[test]
@@ -612,6 +719,7 @@ mod tests {
             cache
                 .put(
                     &format!("https://example.com/clear/{i}"),
+                    &TEST_STRATEGY,
                     &format!("content-{i}"),
                     "text/plain",
                     Duration::from_secs(3600),
@@ -632,6 +740,7 @@ mod tests {
         cache
             .put(
                 "https://foo.com/a",
+                &TEST_STRATEGY,
                 "aaa",
                 "text/html",
                 Duration::from_secs(3600),
@@ -640,6 +749,7 @@ mod tests {
         cache
             .put(
                 "https://foo.com/b",
+                &TEST_STRATEGY,
                 "bbb",
                 "text/html",
                 Duration::from_secs(3600),
@@ -648,6 +758,7 @@ mod tests {
         cache
             .put(
                 "https://bar.com/c",
+                &TEST_STRATEGY,
                 "ccc",
                 "text/html",
                 Duration::from_secs(3600),
@@ -685,6 +796,7 @@ mod tests {
         cache
             .put_with_conditional(
                 "https://example.com/etag-test",
+                &TEST_STRATEGY,
                 "content with etag",
                 "text/html",
                 Duration::from_secs(3600),
@@ -693,7 +805,7 @@ mod tests {
             .unwrap();
 
         let headers = cache
-            .get_conditional_headers("https://example.com/etag-test")
+            .get_conditional_headers("https://example.com/etag-test", &TEST_STRATEGY)
             .unwrap();
         assert_eq!(headers.etag, Some("\"abc123\"".to_string()));
         assert_eq!(
@@ -706,7 +818,7 @@ mod tests {
     fn test_conditional_headers_missing_url() {
         let cache = make_cache();
         let headers = cache
-            .get_conditional_headers("https://example.com/nonexistent")
+            .get_conditional_headers("https://example.com/nonexistent", &TEST_STRATEGY)
             .unwrap();
         assert!(headers.etag.is_none());
         assert!(headers.last_modified.is_none());
@@ -720,6 +832,7 @@ mod tests {
         cache
             .put(
                 "https://example.com/hash-test",
+                &TEST_STRATEGY,
                 content,
                 "text/plain",
                 Duration::from_secs(3600),
@@ -727,13 +840,13 @@ mod tests {
             .unwrap();
 
         assert!(cache
-            .content_hash_unchanged("https://example.com/hash-test", content)
+            .content_hash_unchanged("https://example.com/hash-test", &TEST_STRATEGY, content)
             .unwrap());
         assert!(!cache
-            .content_hash_unchanged("https://example.com/hash-test", "different content")
+            .content_hash_unchanged("https://example.com/hash-test", &TEST_STRATEGY, "different content")
             .unwrap());
         assert!(!cache
-            .content_hash_unchanged("https://example.com/unknown", content)
+            .content_hash_unchanged("https://example.com/unknown", &TEST_STRATEGY, content)
             .unwrap());
     }
 
@@ -745,6 +858,7 @@ mod tests {
         cache
             .put(
                 "https://a.com/page",
+                &TEST_STRATEGY,
                 shared,
                 "text/html",
                 Duration::from_secs(3600),
@@ -753,6 +867,7 @@ mod tests {
         cache
             .put(
                 "https://b.com/page",
+                &TEST_STRATEGY,
                 shared,
                 "text/html",
                 Duration::from_secs(3600),
@@ -761,6 +876,7 @@ mod tests {
         cache
             .put(
                 "https://c.com/other",
+                &TEST_STRATEGY,
                 "different",
                 "text/html",
                 Duration::from_secs(3600),
@@ -780,6 +896,7 @@ mod tests {
         cache
             .put(
                 "https://a.com/1",
+                &TEST_STRATEGY,
                 shared,
                 "text/html",
                 Duration::from_secs(3600),
@@ -788,6 +905,7 @@ mod tests {
         cache
             .put(
                 "https://b.com/2",
+                &TEST_STRATEGY,
                 shared,
                 "text/html",
                 Duration::from_secs(3600),
@@ -796,6 +914,7 @@ mod tests {
         cache
             .put(
                 "https://c.com/3",
+                &TEST_STRATEGY,
                 shared,
                 "text/html",
                 Duration::from_secs(3600),

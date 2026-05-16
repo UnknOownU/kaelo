@@ -36,6 +36,7 @@ pub fn fallback_order() -> Vec<Strategy> {
         Strategy::TlsChrome,
         Strategy::TlsMobile,
         Strategy::Headless,
+        Strategy::PublicApi,
     ]
 }
 
@@ -208,8 +209,9 @@ mod tests {
         visited.insert(Strategy::TlsChrome);
         visited.insert(Strategy::TlsMobile);
         visited.insert(Strategy::Headless);
+        visited.insert(Strategy::PublicApi);
 
-        let result = next_strategy(&Strategy::HttpSimple, &visited, 4, 1, &FetchError::Timeout);
+        let result = next_strategy(&Strategy::HttpSimple, &visited, 5, 1, &FetchError::Timeout);
         assert_eq!(result, None);
     }
 
@@ -232,7 +234,7 @@ mod tests {
         let result = next_strategy(
             &Strategy::HttpSimple,
             &visited,
-            4,
+            5,
             1,
             &FetchError::HttpError(404),
         );
@@ -241,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_fallback_chain_state() {
-        let mut chain = FallbackChain::new(4);
+        let mut chain = FallbackChain::new(5);
         assert_eq!(chain.attempts(), 0);
         assert!(!chain.is_exhausted());
 
@@ -261,10 +263,17 @@ mod tests {
         chain.record_attempt(&Strategy::TlsMobile);
         chain.record_attempt(&Strategy::Headless);
         assert_eq!(chain.attempts(), 4);
+
+        // PublicApi is available as the last resort.
+        let next = chain.next(&Strategy::Headless, &FetchError::Timeout);
+        assert_eq!(next, Some(Strategy::PublicApi));
+
+        chain.record_attempt(&Strategy::PublicApi);
+        assert_eq!(chain.attempts(), 5);
         assert!(chain.is_exhausted());
 
         // No more strategies left.
-        let next = chain.next(&Strategy::Headless, &FetchError::Timeout);
+        let next = chain.next(&Strategy::PublicApi, &FetchError::Timeout);
         assert_eq!(next, None);
     }
 

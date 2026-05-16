@@ -458,6 +458,7 @@ fn content_cache_put_and_get() {
     cache
         .put(
             "https://example.com/page",
+            &Strategy::HttpSimple,
             "# Hello\n\nWorld",
             "text/html",
             Duration::from_secs(3600),
@@ -465,7 +466,7 @@ fn content_cache_put_and_get() {
         .expect("put should succeed");
 
     let cached = cache
-        .get("https://example.com/page")
+        .get("https://example.com/page", &Strategy::HttpSimple)
         .expect("get should succeed")
         .expect("should find cached entry");
     assert_eq!(cached.content, "# Hello\n\nWorld");
@@ -479,7 +480,7 @@ fn content_cache_get_missing_returns_none() {
     let cache = ContentCache::new(&storage);
 
     let result = cache
-        .get("https://example.com/nonexistent")
+        .get("https://example.com/nonexistent", &Strategy::HttpSimple)
         .expect("get should succeed");
     assert!(result.is_none(), "missing URL should return None");
 }
@@ -492,6 +493,7 @@ fn content_cache_invalidate() {
     cache
         .put(
             "https://example.com/page",
+            &Strategy::HttpSimple,
             "content",
             "text/html",
             Duration::from_secs(3600),
@@ -499,11 +501,11 @@ fn content_cache_invalidate() {
         .expect("put should succeed");
 
     cache
-        .invalidate("https://example.com/page")
+        .invalidate("https://example.com/page", Some(&Strategy::HttpSimple))
         .expect("invalidate should succeed");
 
     let result = cache
-        .get("https://example.com/page")
+        .get("https://example.com/page", &Strategy::HttpSimple)
         .expect("get should succeed");
     assert!(result.is_none(), "invalidated entry should return None");
 }
@@ -516,6 +518,7 @@ fn content_cache_clear_all() {
     cache
         .put(
             "https://a.com/1",
+            &Strategy::HttpSimple,
             "content-a",
             "text/html",
             Duration::from_secs(3600),
@@ -524,6 +527,7 @@ fn content_cache_clear_all() {
     cache
         .put(
             "https://b.com/2",
+            &Strategy::HttpSimple,
             "content-b",
             "text/html",
             Duration::from_secs(3600),
@@ -548,6 +552,7 @@ fn content_cache_stats() {
     cache
         .put(
             "https://example.com/page",
+            &Strategy::HttpSimple,
             "Hello World",
             "text/html",
             Duration::from_secs(3600),
@@ -571,18 +576,18 @@ fn content_cache_content_hash() {
     let content = "deterministic content for hash check";
 
     cache
-        .put(url, content, "text/html", Duration::from_secs(3600))
+        .put(url, &Strategy::HttpSimple, content, "text/html", Duration::from_secs(3600))
         .expect("put should succeed");
 
     let hash = cache
-        .content_hash(url)
+        .content_hash(url, &Strategy::HttpSimple)
         .expect("content_hash should succeed")
         .expect("should have a hash");
     assert!(!hash.is_empty(), "hash should not be empty");
 
     // Hash should be consistent
     let hash2 = cache
-        .content_hash(url)
+        .content_hash(url, &Strategy::HttpSimple)
         .expect("content_hash should succeed")
         .expect("should have a hash");
     assert_eq!(hash, hash2, "hash should be deterministic");
@@ -597,18 +602,18 @@ fn content_cache_content_hash_unchanged() {
     let content = "some content";
 
     cache
-        .put(url, content, "text/html", Duration::from_secs(3600))
+        .put(url, &Strategy::HttpSimple, content, "text/html", Duration::from_secs(3600))
         .expect("put should succeed");
 
     assert!(
         cache
-            .content_hash_unchanged(url, content)
+            .content_hash_unchanged(url, &Strategy::HttpSimple, content)
             .expect("content_hash_unchanged should succeed"),
         "same content should match hash"
     );
     assert!(
         !cache
-            .content_hash_unchanged(url, "different content")
+            .content_hash_unchanged(url, &Strategy::HttpSimple, "different content")
             .expect("content_hash_unchanged should succeed"),
         "different content should not match hash"
     );
