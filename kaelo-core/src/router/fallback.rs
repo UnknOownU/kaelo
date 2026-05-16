@@ -2,10 +2,6 @@ use std::collections::HashSet;
 
 use crate::types::{FetchError, Strategy};
 
-// ---------------------------------------------------------------------------
-// ErrorClass
-// ---------------------------------------------------------------------------
-
 /// Classification of fetch errors for fallback decisions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErrorClass {
@@ -33,10 +29,6 @@ pub fn classify_error(error: &FetchError) -> ErrorClass {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Fallback ordering
-// ---------------------------------------------------------------------------
-
 /// Strategy priority order for fallback.
 pub fn fallback_order() -> Vec<Strategy> {
     vec![
@@ -46,10 +38,6 @@ pub fn fallback_order() -> Vec<Strategy> {
         Strategy::Headless,
     ]
 }
-
-// ---------------------------------------------------------------------------
-// next_strategy
-// ---------------------------------------------------------------------------
 
 /// Determine the next strategy to try after a failure.
 ///
@@ -64,17 +52,14 @@ pub fn next_strategy(
     attempts: u32,
     error: &FetchError,
 ) -> Option<Strategy> {
-    // Guard: max attempts exceeded
     if attempts >= max_attempts {
         return None;
     }
 
-    // Guard: terminal errors don't get fallback
     if matches!(classify_error(error), ErrorClass::NotFound) {
         return None;
     }
 
-    // Get the next unvisited strategy in fallback order
     let order = fallback_order();
     let current_idx = order.iter().position(|s| s == current).unwrap_or(0);
 
@@ -86,10 +71,6 @@ pub fn next_strategy(
 
     None
 }
-
-// ---------------------------------------------------------------------------
-// FallbackChain
-// ---------------------------------------------------------------------------
 
 /// Tracks state across retry attempts for a single fetch operation.
 pub struct FallbackChain {
@@ -136,15 +117,9 @@ impl FallbackChain {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ---- classify_error ----
 
     #[test]
     fn test_classify_timeout_transient() {
@@ -216,8 +191,6 @@ mod tests {
         );
     }
 
-    // ---- next_strategy ----
-
     #[test]
     fn test_next_strategy_advances() {
         let visited = HashSet::new();
@@ -270,8 +243,6 @@ mod tests {
         );
         assert_eq!(result, None);
     }
-
-    // ---- FallbackChain ----
 
     #[test]
     fn test_fallback_chain_state() {

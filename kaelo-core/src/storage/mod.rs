@@ -79,11 +79,6 @@ mod tests {
     }
 
     #[test]
-    fn test_wal_mode() {
-        let _storage = Storage::open(":memory:").unwrap();
-    }
-
-    #[test]
     fn test_wal_mode_on_file() {
         let dir = std::env::temp_dir().join("kaelo_test_wal");
         std::fs::create_dir_all(&dir).unwrap();

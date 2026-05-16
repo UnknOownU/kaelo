@@ -1,6 +1,9 @@
 use clap::{Parser, Subcommand};
 use kaelo_fetch::backend::FetchBackend;
 use std::path::PathBuf;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(
@@ -67,18 +70,85 @@ enum CacheCommands {
     },
 }
 
+fn init_tracing() {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let log_dir = PathBuf::from(home).join(".config").join("kaelo");
+    let _ = std::fs::create_dir_all(&log_dir);
+
+    let log_path = log_dir.join("kaelo.log");
+
+    let file = match std::fs::File::create(&log_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!(
+                "warning: cannot create log file {}: {e}",
+                log_path.display()
+            );
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    EnvFilter::try_from_env("KAELO_LOG_LEVEL")
+                        .unwrap_or_else(|_| EnvFilter::new("info")),
+                )
+                .with_writer(std::io::stderr)
+                .with_ansi(false)
+                .init();
+            return;
+        }
+    };
+
+    let filter =
+        EnvFilter::try_from_env("KAELO_LOG_LEVEL").unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let file_layer = tracing_subscriber::fmt::layer()
+        .json()
+        .with_writer(std::sync::Mutex::new(file));
+
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .pretty()
+        .with_writer(std::io::stderr);
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(file_layer)
+        .with(stderr_layer)
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    init_tracing();
+    tracing::info!("Kaelo v{} starting...", env!("CARGO_PKG_VERSION"));
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Serve => {
-            let storage = kaelo_core::storage::Storage::open("kaelo.db")?;
-            let server = kaelo_mcp::KaeloServer::new(storage);
-            kaelo_mcp::server::serve_stdio(server).await?;
+            let config = kaelo_core::config::Config::load();
+            let storage = kaelo_core::storage::Storage::open(&config.db_path.to_string_lossy())?;
+            let server = kaelo_mcp::KaeloServer::with_config(
+                storage,
+                config.searxng_url.clone(),
+                config.search_backend.clone(),
+            );
+
+            tokio::select! {
+                result = kaelo_mcp::server::serve_stdio(server) => {
+                    result?;
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!("Received Ctrl+C, shutting down gracefully...");
+                    let cleanup = async {
+                        kaelo_fetch::backends::shutdown_browser_pool().await;
+                    };
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        cleanup,
+                    ).await;
+                    tracing::info!("Shutdown complete.");
+                }
+            }
         }
         Commands::Cache { command } => {
-            let config = kaelo_core::config::Config::from_env();
+            let config = kaelo_core::config::Config::load();
             match command {
                 CacheCommands::Status => {
                     match kaelo_core::storage::Storage::open(&config.db_path.to_string_lossy()) {
@@ -187,7 +257,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Setup => {
-            let config = kaelo_core::config::Config::from_env();
+            let config = kaelo_core::config::Config::load();
             println!("Kaelo Configuration:");
             println!("  Cache enabled: {}", config.cache_enabled);
             println!("  Cache max size: {} bytes", config.cache_max_size);

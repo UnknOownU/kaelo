@@ -6,13 +6,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
+use crate::router::probe::StrategyProber;
 use crate::storage::route_cache::{FetchResult, RouteCache};
 use crate::storage::Storage;
 use crate::types::Strategy;
-
-// ---------------------------------------------------------------------------
-// RouterDecision
-// ---------------------------------------------------------------------------
 
 /// The outcome of resolving a URL through the router.
 #[derive(Debug, Clone, PartialEq)]
@@ -23,14 +20,11 @@ pub enum RouterDecision {
     Unknown { strategy: Strategy },
 }
 
-// ---------------------------------------------------------------------------
-// Router
-// ---------------------------------------------------------------------------
-
 /// Maps a URL to the best fetch strategy by consulting the route cache.
 pub struct Router {
     storage: Arc<Storage>,
     default_strategy: Strategy,
+    prober: Option<Arc<dyn StrategyProber>>,
 }
 
 impl Router {
@@ -38,6 +32,7 @@ impl Router {
         Self {
             storage,
             default_strategy: Strategy::HttpSimple,
+            prober: None,
         }
     }
 
@@ -46,11 +41,11 @@ impl Router {
         self
     }
 
-    /// Resolve the best fetch strategy for `url`.
-    ///
-    /// 1. Extract domain from URL.
-    /// 2. Look up route cache for known strategies.
-    /// 3. Return best cached strategy or the default.
+    pub fn with_prober(mut self, prober: Arc<dyn StrategyProber>) -> Self {
+        self.prober = Some(prober);
+        self
+    }
+
     pub fn resolve(&self, url: &str) -> Result<RouterDecision> {
         let domain = extract_domain(url)?;
         let cache = RouteCache::new(&self.storage);
@@ -59,6 +54,53 @@ impl Router {
             let strategy = parse_strategy(&cached.strategy)?;
             let s = compute_score(cached.success_rate, cached.avg_latency_ms);
             return Ok(RouterDecision::Known { strategy, score: s });
+        }
+
+        Ok(RouterDecision::Unknown {
+            strategy: self.default_strategy.clone(),
+        })
+    }
+
+    /// Resolve the best strategy, probing if the domain is unknown.
+    ///
+    /// - If `explicit_strategy` is `Some`, return it directly (no probing).
+    /// - If the domain has a cached strategy, return it (no probing).
+    /// - Otherwise, probe using multiple strategies and cache the winner.
+    pub async fn resolve_with_probing(
+        &self,
+        url: &str,
+        explicit_strategy: Option<&Strategy>,
+    ) -> Result<RouterDecision> {
+        if let Some(strategy) = explicit_strategy {
+            return Ok(RouterDecision::Known {
+                strategy: strategy.clone(),
+                score: 1.0,
+            });
+        }
+
+        let domain = extract_domain(url)?;
+        let cache = RouteCache::new(&self.storage);
+
+        if let Some(cached) = cache.get_best_strategy(&domain)? {
+            let strategy = parse_strategy(&cached.strategy)?;
+            let s = compute_score(cached.success_rate, cached.avg_latency_ms);
+            return Ok(RouterDecision::Known { strategy, score: s });
+        }
+
+        if let Some(prober) = &self.prober {
+            if let Some(winner) = probe::probe_and_cache(
+                prober.as_ref(),
+                &self.storage,
+                &domain,
+                &self.default_strategy,
+            )
+            .await
+            {
+                return Ok(RouterDecision::Known {
+                    strategy: winner,
+                    score: 0.5,
+                });
+            }
         }
 
         Ok(RouterDecision::Unknown {
@@ -96,10 +138,6 @@ impl Router {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Extract the host from a URL using simple string parsing.
 fn extract_domain(url: &str) -> Result<String> {
     let no_proto = url
@@ -132,7 +170,13 @@ fn compute_score(success_rate: f64, avg_latency_ms: u64) -> f64 {
 #[allow(clippy::arc_with_non_send_sync)]
 mod tests {
     use super::*;
+    use crate::router::probe::StrategyProber;
     use crate::storage::route_cache::FetchResult;
+    use crate::types::{FetchError, FetchResponse};
+    use std::collections::HashMap;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::time::Duration;
 
     /// Seed the route cache with a strategy for the given domain.
     fn seed_strategy(
@@ -320,5 +364,201 @@ mod tests {
 
         let cache = RouteCache::new(&storage);
         assert_eq!(cache.count_entries().unwrap(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // resolve_with_probing tests
+    // -----------------------------------------------------------------------
+
+    struct MockStrategyProber {
+        responses: HashMap<String, Result<FetchResponse, FetchError>>,
+    }
+
+    impl MockStrategyProber {
+        fn new() -> Self {
+            Self {
+                responses: HashMap::new(),
+            }
+        }
+
+        fn respond_to(mut self, strategy: &str, result: Result<FetchResponse, FetchError>) -> Self {
+            self.responses.insert(strategy.to_string(), result);
+            self
+        }
+    }
+
+    impl StrategyProber for MockStrategyProber {
+        fn probe_with_strategy(
+            &self,
+            _url: &str,
+            strategy: &Strategy,
+            _timeout: Duration,
+        ) -> Pin<Box<dyn Future<Output = Result<FetchResponse, FetchError>> + Send + '_>> {
+            let key = format!("{:?}", strategy);
+            let result = self.responses.get(&key).cloned();
+            Box::pin(std::future::ready(
+                result.unwrap_or(Err(FetchError::NetworkError("no mock".to_string()))),
+            ))
+        }
+    }
+
+    fn ok_response() -> Result<FetchResponse, FetchError> {
+        Ok(FetchResponse {
+            status: 200,
+            headers: HashMap::new(),
+            body: b"ok".to_vec(),
+            content_type: "text/html".to_string(),
+            latency: Duration::from_millis(100),
+        })
+    }
+
+    #[tokio::test]
+    async fn test_resolve_with_probing_explicit_skips_probing() {
+        let storage = Arc::new(Storage::open(":memory:").expect("storage"));
+        let prober = Arc::new(MockStrategyProber::new());
+        let router = Router::new(storage).with_prober(prober);
+
+        let decision = router
+            .resolve_with_probing("https://newsite.com/page", Some(&Strategy::Headless))
+            .await
+            .expect("resolve_with_probing");
+
+        match decision {
+            RouterDecision::Known { strategy, .. } => {
+                assert_eq!(strategy, Strategy::Headless);
+            }
+            RouterDecision::Unknown { .. } => panic!("expected Known for explicit strategy"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_with_probing_uses_cached() {
+        let storage = Arc::new(Storage::open(":memory:").expect("storage"));
+        seed_strategy(&storage, "cached.com", "TlsChrome", 300, true);
+
+        let prober = Arc::new(MockStrategyProber::new());
+        let router = Router::new(Arc::clone(&storage)).with_prober(prober);
+
+        let decision = router
+            .resolve_with_probing("https://cached.com/page", None)
+            .await
+            .expect("resolve_with_probing");
+
+        match decision {
+            RouterDecision::Known { strategy, score } => {
+                assert_eq!(strategy, Strategy::TlsChrome);
+                assert!(score > 0.0);
+            }
+            RouterDecision::Unknown { .. } => panic!("expected Known for cached domain"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_with_probing_probes_unknown() {
+        let storage = Arc::new(Storage::open(":memory:").expect("storage"));
+        let prober = Arc::new(
+            MockStrategyProber::new()
+                .respond_to("HttpSimple", Err(FetchError::Timeout))
+                .respond_to("TlsChrome", ok_response())
+                .respond_to("TlsMobile", ok_response())
+                .respond_to("Headless", ok_response()),
+        );
+
+        let router = Router::new(Arc::clone(&storage)).with_prober(prober);
+
+        let decision = router
+            .resolve_with_probing("https://unknown-site.com/page", None)
+            .await
+            .expect("resolve_with_probing");
+
+        match decision {
+            RouterDecision::Known { strategy, .. } => {
+                assert_eq!(strategy, Strategy::TlsChrome);
+            }
+            RouterDecision::Unknown { .. } => panic!("expected Known after probing"),
+        }
+
+        let cache = RouteCache::new(&storage);
+        let cached = cache.get_best_strategy("unknown-site.com").expect("cache");
+        assert!(cached.is_some());
+        assert_eq!(cached.expect("cached").strategy, "TlsChrome");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_with_probing_all_fail_returns_default() {
+        let storage = Arc::new(Storage::open(":memory:").expect("storage"));
+        let prober = Arc::new(MockStrategyProber::new());
+
+        let router = Router::new(Arc::clone(&storage)).with_prober(prober);
+
+        let decision = router
+            .resolve_with_probing("https://dead-site.com/page", None)
+            .await
+            .expect("resolve_with_probing");
+
+        match decision {
+            RouterDecision::Known { strategy, .. } => {
+                assert_eq!(strategy, Strategy::HttpSimple);
+            }
+            RouterDecision::Unknown { .. } => panic!("expected Known (default cached)"),
+        }
+
+        let cache = RouteCache::new(&storage);
+        let cached = cache.get_best_strategy("dead-site.com").expect("cache");
+        assert!(cached.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_with_probing_no_prober_returns_unknown() {
+        let storage = Arc::new(Storage::open(":memory:").expect("storage"));
+        let router = Router::new(storage);
+
+        let decision = router
+            .resolve_with_probing("https://no-prober.com/page", None)
+            .await
+            .expect("resolve_with_probing");
+
+        match decision {
+            RouterDecision::Unknown { strategy } => {
+                assert_eq!(strategy, Strategy::HttpSimple);
+            }
+            RouterDecision::Known { .. } => panic!("expected Unknown without prober"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_with_probing_second_call_uses_cache() {
+        let storage = Arc::new(Storage::open(":memory:").expect("storage"));
+        let prober = Arc::new(
+            MockStrategyProber::new()
+                .respond_to("HttpSimple", ok_response())
+                .respond_to("TlsChrome", ok_response())
+                .respond_to("TlsMobile", ok_response())
+                .respond_to("Headless", ok_response()),
+        );
+
+        let router =
+            Router::new(Arc::clone(&storage)).with_prober(prober as Arc<dyn StrategyProber>);
+
+        let first = router
+            .resolve_with_probing("https://fresh.com/page", None)
+            .await
+            .expect("first resolve");
+        assert!(matches!(first, RouterDecision::Known { .. }));
+
+        let cache = RouteCache::new(&storage);
+        let cached = cache.get_best_strategy("fresh.com").expect("cache");
+        assert!(cached.is_some());
+
+        let second = router
+            .resolve_with_probing("https://fresh.com/other", None)
+            .await
+            .expect("second resolve");
+        match second {
+            RouterDecision::Known { score, .. } => {
+                assert!(score > 0.0);
+            }
+            RouterDecision::Unknown { .. } => panic!("expected Known on second call"),
+        }
     }
 }

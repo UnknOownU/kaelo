@@ -5,6 +5,17 @@ use anyhow::{Context, Result};
 
 use super::Storage;
 
+const DEFAULT_MAX_ENTRIES: usize = 10_000;
+
+/// Read the configured max route cache entries from env var,
+/// falling back to the default.
+pub fn max_entries() -> usize {
+    std::env::var("KAELO_MAX_ROUTE_ENTRIES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_MAX_ENTRIES)
+}
+
 #[derive(Debug, Clone)]
 pub struct CachedStrategy {
     pub domain: String,
@@ -170,6 +181,14 @@ impl<'a> RouteCache<'a> {
             }
         }
 
+        let count: u64 = conn.query_row("SELECT COUNT(*) FROM domain_strategies", [], |row| {
+            row.get(0)
+        })?;
+        let max = max_entries();
+        if count > max as u64 {
+            self.evict_oldest(count as usize - max)?;
+        }
+
         Ok(())
     }
 
@@ -200,6 +219,20 @@ impl<'a> RouteCache<'a> {
             rusqlite::params![min_requests, min_success_rate, cutoff],
         )?;
 
+        Ok(deleted as u64)
+    }
+
+    pub fn evict_oldest(&self, limit: usize) -> Result<u64> {
+        if limit == 0 {
+            return Ok(0);
+        }
+        let conn = self.storage.conn();
+        let deleted = conn.execute(
+            "DELETE FROM domain_strategies WHERE rowid IN (
+                SELECT rowid FROM domain_strategies ORDER BY last_check_at ASC LIMIT ?1
+            )",
+            rusqlite::params![limit as i64],
+        )?;
         Ok(deleted as u64)
     }
 
@@ -244,6 +277,67 @@ impl<'a> RouteCache<'a> {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(rows)
+    }
+
+    /// Serialize all route cache entries to a JSON string.
+    pub fn export_to_json(&self) -> Result<String> {
+        let strategies = self.get_all_strategies()?;
+
+        #[derive(serde::Serialize)]
+        struct ExportEntry {
+            domain: String,
+            strategy: String,
+            avg_latency_ms: u64,
+            success_rate: f64,
+            total_requests: u32,
+        }
+
+        let entries: Vec<ExportEntry> = strategies
+            .into_iter()
+            .map(|s| ExportEntry {
+                domain: s.domain,
+                strategy: s.strategy,
+                avg_latency_ms: s.avg_latency_ms,
+                success_rate: s.success_rate,
+                total_requests: s.total_requests,
+            })
+            .collect();
+
+        let json =
+            serde_json::to_string_pretty(&entries).context("failed to serialize route cache")?;
+        Ok(json)
+    }
+
+    /// Deserialize entries from a JSON string and upsert them (merge with existing).
+    /// Returns the count of imported entries.
+    pub fn import_from_json(&self, json: &str) -> Result<usize> {
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        struct ImportEntry {
+            domain: String,
+            strategy: String,
+            avg_latency_ms: u64,
+            success_rate: f64,
+            total_requests: u32,
+        }
+
+        let entries: Vec<ImportEntry> =
+            serde_json::from_str(json).context("failed to parse import JSON")?;
+
+        let mut count = 0usize;
+        for entry in &entries {
+            // Use upsert_strategy with a synthetic FetchResult so it merges
+            // running averages with any existing entry instead of overwriting.
+            let result = FetchResult {
+                latency_ms: entry.avg_latency_ms,
+                success: entry.success_rate > 0.5,
+                headers: None,
+            };
+            self.upsert_strategy(&entry.domain, &entry.strategy, &result)?;
+            count += 1;
+        }
+
+        Ok(count)
     }
 
     pub fn export_json(&self, path: &Path) -> Result<()> {
@@ -689,5 +783,176 @@ mod tests {
 
         let best = cache.get_best_strategy("example.com").unwrap().unwrap();
         assert_eq!(best.strategy, "TlsMobile");
+    }
+
+    #[test]
+    fn test_export_to_json_empty_cache() {
+        let storage = make_storage();
+        let cache = RouteCache::new(&storage);
+
+        let json = cache.export_to_json().unwrap();
+        assert_eq!(json.trim(), "[]");
+    }
+
+    #[test]
+    fn test_export_import_roundtrip() {
+        let storage = make_storage();
+        let cache = RouteCache::new(&storage);
+
+        cache
+            .upsert_strategy("example.com", "HttpSimple", &ok_result(100))
+            .unwrap();
+        cache
+            .upsert_strategy("example.com", "TlsMobile", &ok_result(200))
+            .unwrap();
+        cache
+            .upsert_strategy("github.com", "Headless", &fail_result(500))
+            .unwrap();
+
+        let json = cache.export_to_json().unwrap();
+        assert!(json.contains("example.com"));
+        assert!(json.contains("github.com"));
+
+        let storage2 = make_storage();
+        let cache2 = RouteCache::new(&storage2);
+        let count = cache2.import_from_json(&json).unwrap();
+        assert_eq!(count, 3);
+
+        assert!(cache2.get_best_strategy("example.com").unwrap().is_some());
+        assert!(cache2.get_best_strategy("github.com").unwrap().is_some());
+    }
+
+    #[test]
+    fn test_import_from_json_invalid() {
+        let storage = make_storage();
+        let cache = RouteCache::new(&storage);
+
+        let result = cache.import_from_json("not valid json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_import_from_json_merges_existing() {
+        let storage = make_storage();
+        let cache = RouteCache::new(&storage);
+
+        cache
+            .upsert_strategy("example.com", "HttpSimple", &ok_result(100))
+            .unwrap();
+        let original = cache.get_best_strategy("example.com").unwrap().unwrap();
+        assert_eq!(original.total_requests, 1);
+
+        let json = r#"[
+            {"domain":"example.com","strategy":"HttpSimple","avg_latency_ms":200,"success_rate":1.0,"total_requests":1}
+        ]"#;
+        let count = cache.import_from_json(json).unwrap();
+        assert_eq!(count, 1);
+
+        let merged = cache.get_best_strategy("example.com").unwrap().unwrap();
+        assert_eq!(merged.total_requests, 2);
+    }
+
+    #[test]
+    fn test_lru_eviction_at_limit() {
+        let storage = make_storage();
+        let cache = RouteCache::new(&storage);
+
+        for i in 0..11 {
+            let domain = format!("site{}.com", i);
+            cache
+                .upsert_strategy(&domain, "HttpSimple", &ok_result(100))
+                .unwrap();
+        }
+
+        assert_eq!(cache.count_entries().unwrap(), 11);
+
+        let evicted = cache.evict_oldest(1).unwrap();
+        assert_eq!(evicted, 1);
+        assert_eq!(cache.count_entries().unwrap(), 10);
+    }
+
+    #[test]
+    fn test_lru_eviction_oldest_removed() {
+        let storage = make_storage();
+        let cache = RouteCache::new(&storage);
+
+        for i in 0..3 {
+            let domain = format!("old{}.com", i);
+            cache
+                .upsert_strategy(&domain, "HttpSimple", &ok_result(100))
+                .unwrap();
+        }
+
+        let conn = storage.conn();
+        conn.execute(
+            "UPDATE domain_strategies SET last_check_at = '2020-01-01T00:00:00Z'
+             WHERE domain LIKE 'old%'",
+            [],
+        )
+        .unwrap();
+
+        for i in 0..3 {
+            let domain = format!("new{}.com", i);
+            cache
+                .upsert_strategy(&domain, "HttpSimple", &ok_result(100))
+                .unwrap();
+        }
+
+        cache.evict_oldest(3).unwrap();
+
+        assert_eq!(cache.count_entries().unwrap(), 3);
+
+        let domains = cache.get_all_domains().unwrap();
+        for d in &domains {
+            assert!(
+                !d.starts_with("old"),
+                "oldest entry should have been evicted, found {d}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_lru_newest_preserved() {
+        let storage = make_storage();
+        let cache = RouteCache::new(&storage);
+
+        for i in 0..4 {
+            let domain = format!("site{}.com", i);
+            cache
+                .upsert_strategy(&domain, "HttpSimple", &ok_result(100))
+                .unwrap();
+        }
+
+        cache.evict_oldest(1).unwrap();
+
+        assert_eq!(cache.count_entries().unwrap(), 3);
+
+        let best = cache.get_best_strategy("site3.com").unwrap();
+        assert!(best.is_some(), "newest entry should be preserved");
+
+        let best = cache.get_best_strategy("site0.com").unwrap();
+        assert!(best.is_none(), "oldest entry should be evicted");
+    }
+
+    #[test]
+    fn test_max_entries_env_var_override() {
+        std::env::set_var("KAELO_MAX_ROUTE_ENTRIES", "42");
+        assert_eq!(max_entries(), 42);
+        std::env::remove_var("KAELO_MAX_ROUTE_ENTRIES");
+        assert_eq!(max_entries(), DEFAULT_MAX_ENTRIES);
+    }
+
+    #[test]
+    fn test_evict_oldest_zero_limit() {
+        let storage = make_storage();
+        let cache = RouteCache::new(&storage);
+
+        cache
+            .upsert_strategy("example.com", "HttpSimple", &ok_result(100))
+            .unwrap();
+
+        let removed = cache.evict_oldest(0).unwrap();
+        assert_eq!(removed, 0);
+        assert_eq!(cache.count_entries().unwrap(), 1);
     }
 }

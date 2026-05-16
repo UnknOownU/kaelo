@@ -1,11 +1,12 @@
 [package]
 name = "kaelo-fetch"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 kaelo-core = { path = "../kaelo-core" }

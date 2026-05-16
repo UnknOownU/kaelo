@@ -9,15 +9,7 @@ use sha2::{Digest, Sha256};
 
 use super::Storage;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const MAX_ENTRY_SIZE: usize = 100 * 1024; // 100 KB
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 /// Cached ETag / Last-Modified for conditional requests.
 #[derive(Debug, Clone)]
@@ -42,10 +34,6 @@ pub struct CacheStats {
     pub total_size_bytes: u64,
     pub top_domains: Vec<(String, u64)>,
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 fn gzip_compress(data: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -93,8 +81,6 @@ fn now_iso() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     let secs = dur.as_secs() as i64;
-    // RFC 3339 formatted timestamp using chrono-free approach
-    // Store as seconds-since-epoch string for simplicity
     secs.to_string()
 }
 
@@ -108,10 +94,6 @@ fn epoch_now_secs() -> u64 {
 fn epoch_from_iso(s: &str) -> u64 {
     s.parse::<u64>().unwrap_or(0)
 }
-
-// ---------------------------------------------------------------------------
-// ContentCache
-// ---------------------------------------------------------------------------
 
 pub struct ContentCache<'a> {
     storage: &'a Storage,
@@ -201,16 +183,13 @@ impl<'a> ContentCache<'a> {
                 Err(e) => return Err(e).context("failed to query url_cache"),
             };
 
-        // Check TTL
         let now_secs = epoch_now_secs();
         let expires_secs = epoch_from_iso(&expires_at);
         if now_secs >= expires_secs {
-            // Expired — delete and return None
             let _ = self.invalidate(url);
             return Ok(None);
         }
 
-        // Decompress
         let decompressed = gzip_decompress(&compressed)?;
         let content =
             String::from_utf8(decompressed).context("cached content is not valid UTF-8")?;
@@ -301,7 +280,6 @@ impl<'a> ContentCache<'a> {
             return Ok(0);
         }
 
-        // Collect entries ordered by last_accessed_at ASC (oldest first)
         let mut stmt = conn.prepare(
             "SELECT url, LENGTH(compressed_content) FROM url_cache ORDER BY last_accessed_at ASC",
         )?;
@@ -346,7 +324,6 @@ impl<'a> ContentCache<'a> {
             )
             .map(|s| s as u64)?;
 
-        // Extract domains and count
         let mut stmt = conn.prepare("SELECT url FROM url_cache")?;
         let urls: Vec<String> = stmt
             .query_map([], |row| row.get::<_, String>(0))?
@@ -436,7 +413,6 @@ impl<'a> ContentCache<'a> {
     pub fn dedup(&self) -> Result<u64> {
         let conn = self.storage.conn();
 
-        // Find content_hashes that appear more than once.
         let mut stmt = conn.prepare(
             "SELECT content_hash, COUNT(*) as cnt
              FROM url_cache
@@ -462,7 +438,6 @@ impl<'a> ContentCache<'a> {
                 .query_map([hash], |row| row.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?;
 
-            // Keep the last one (most recently accessed), delete others.
             let to_delete = urls.len().saturating_sub(1);
             for url in urls.iter().take(to_delete) {
                 conn.execute("DELETE FROM url_cache WHERE url = ?1", [url])?;

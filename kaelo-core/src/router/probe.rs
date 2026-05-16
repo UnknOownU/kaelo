@@ -1,9 +1,14 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use crate::types::{FetchError, FetchRequest, FetchResponse};
+use crate::storage::route_cache::{FetchResult, RouteCache};
+use crate::storage::Storage;
+use crate::types::{FetchError, FetchRequest, FetchResponse, Strategy};
+
+use super::fallback::fallback_order;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProbeResult {
@@ -13,6 +18,18 @@ pub enum ProbeResult {
     Error { message: String },
 }
 
+/// Outcome of a multi-strategy probe for an unknown domain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrategyProbeResult {
+    /// The strategy that won the probe (lowest latency among successful).
+    pub strategy: Strategy,
+    /// Measured latency in milliseconds.
+    pub latency_ms: u64,
+}
+
+/// Per-strategy timeout for probing.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Lightweight probe request backend.
 ///
 /// Defined in `kaelo-core` so the router can use it without depending on
@@ -21,6 +38,19 @@ pub trait Prober: Send + Sync {
     fn probe(
         &self,
         request: FetchRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<FetchResponse, FetchError>> + Send + '_>>;
+}
+
+/// Extended prober that can try a specific strategy.
+///
+/// Each strategy variant gets its own method so the concrete implementation
+/// (in `kaelo-fetch`) can dispatch to the right backend.
+pub trait StrategyProber: Send + Sync {
+    fn probe_with_strategy(
+        &self,
+        url: &str,
+        strategy: &Strategy,
+        timeout: Duration,
     ) -> Pin<Box<dyn Future<Output = Result<FetchResponse, FetchError>> + Send + '_>>;
 }
 
@@ -38,6 +68,93 @@ pub async fn probe_domain(prober: &dyn Prober, url: &str) -> ProbeResult {
     match prober.probe(request).await {
         Ok(response) => classify_response(response),
         Err(e) => classify_error(e),
+    }
+}
+
+/// Try multiple strategies in priority order and return the fastest successful
+/// one. Each strategy gets a 5-second timeout. The total probe is bounded by
+/// `strategies.len() * 5s`.
+///
+/// If all strategies fail, returns `None`.
+pub async fn probe_with_strategies(
+    prober: &dyn StrategyProber,
+    domain: &str,
+    strategies: &[Strategy],
+) -> Option<StrategyProbeResult> {
+    let url = format!("https://{domain}/");
+    let mut best: Option<StrategyProbeResult> = None;
+
+    for strategy in strategies {
+        let start = Instant::now();
+        let result = prober
+            .probe_with_strategy(&url, strategy, PROBE_TIMEOUT)
+            .await;
+
+        let latency = start.elapsed();
+        let latency_ms = latency.as_millis() as u64;
+
+        match result {
+            Ok(response) if is_probe_success(&response) => {
+                let candidate = StrategyProbeResult {
+                    strategy: strategy.clone(),
+                    latency_ms,
+                };
+                if best
+                    .as_ref()
+                    .is_none_or(|b| candidate.latency_ms < b.latency_ms)
+                {
+                    best = Some(candidate);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    best
+}
+
+fn is_probe_success(response: &FetchResponse) -> bool {
+    !matches!(response.status, 403 | 503)
+}
+
+/// Probe an unknown domain using multiple strategies, cache the winner, and
+/// return it. Returns `None` if all strategies fail.
+pub async fn probe_and_cache(
+    prober: &dyn StrategyProber,
+    storage: &Arc<Storage>,
+    domain: &str,
+    default_strategy: &Strategy,
+) -> Option<Strategy> {
+    let strategies: Vec<Strategy> = fallback_order()
+        .into_iter()
+        .filter(|s| !matches!(s, Strategy::PublicApi))
+        .collect();
+
+    let result = probe_with_strategies(prober, domain, &strategies).await;
+
+    match result {
+        Some(probe_result) => {
+            let cache = RouteCache::new(storage);
+            let fetch_result = FetchResult {
+                latency_ms: probe_result.latency_ms,
+                success: true,
+                headers: None,
+            };
+            let strategy_name = format!("{:?}", probe_result.strategy);
+            let _ = cache.upsert_strategy(domain, &strategy_name, &fetch_result);
+            Some(probe_result.strategy)
+        }
+        None => {
+            let cache = RouteCache::new(storage);
+            let fetch_result = FetchResult {
+                latency_ms: 5000,
+                success: false,
+                headers: None,
+            };
+            let strategy_name = format!("{:?}", default_strategy);
+            let _ = cache.upsert_strategy(domain, &strategy_name, &fetch_result);
+            Some(default_strategy.clone())
+        }
     }
 }
 
@@ -85,6 +202,7 @@ fn classify_error(e: FetchError) -> ProbeResult {
 }
 
 #[cfg(test)]
+#[allow(clippy::arc_with_non_send_sync)]
 mod tests {
     use super::*;
 
@@ -326,5 +444,223 @@ mod tests {
                 message: "dns failed".to_string()
             }
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Multi-strategy probe tests
+    // -----------------------------------------------------------------------
+
+    struct MockStrategyProber {
+        responses: HashMap<String, Result<FetchResponse, FetchError>>,
+    }
+
+    impl MockStrategyProber {
+        fn new() -> Self {
+            Self {
+                responses: HashMap::new(),
+            }
+        }
+
+        fn respond_to(mut self, strategy: &str, result: Result<FetchResponse, FetchError>) -> Self {
+            self.responses.insert(strategy.to_string(), result);
+            self
+        }
+    }
+
+    impl StrategyProber for MockStrategyProber {
+        fn probe_with_strategy(
+            &self,
+            _url: &str,
+            strategy: &Strategy,
+            _timeout: Duration,
+        ) -> Pin<Box<dyn Future<Output = Result<FetchResponse, FetchError>> + Send + '_>> {
+            let key = format!("{:?}", strategy);
+            let result = self.responses.get(&key).cloned();
+            Box::pin(std::future::ready(result.unwrap_or(Err(
+                FetchError::NetworkError("no mock response".to_string()),
+            ))))
+        }
+    }
+
+    fn ok_response(status: u16) -> Result<FetchResponse, FetchError> {
+        Ok(FetchResponse {
+            status,
+            headers: HashMap::new(),
+            body: b"ok".to_vec(),
+            content_type: "text/html".to_string(),
+            latency: Duration::from_millis(100),
+        })
+    }
+
+    #[tokio::test]
+    async fn test_multi_probe_selects_first_successful() {
+        let prober = MockStrategyProber::new()
+            .respond_to("HttpSimple", Err(FetchError::Timeout))
+            .respond_to("TlsChrome", ok_response(200));
+
+        let strategies = vec![Strategy::HttpSimple, Strategy::TlsChrome];
+        let result = probe_with_strategies(&prober, "example.com", &strategies).await;
+
+        assert!(result.is_some());
+        let winner = result.expect("should have a winner");
+        assert_eq!(winner.strategy, Strategy::TlsChrome);
+    }
+
+    #[tokio::test]
+    async fn test_multi_probe_all_fail_returns_none() {
+        let prober = MockStrategyProber::new()
+            .respond_to("HttpSimple", Err(FetchError::Timeout))
+            .respond_to(
+                "TlsChrome",
+                Err(FetchError::NetworkError("fail".to_string())),
+            )
+            .respond_to(
+                "Headless",
+                Err(FetchError::BrowserError("crash".to_string())),
+            );
+
+        let strategies = vec![
+            Strategy::HttpSimple,
+            Strategy::TlsChrome,
+            Strategy::Headless,
+        ];
+        let result = probe_with_strategies(&prober, "dead.com", &strategies).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_multi_probe_blocked_403_skipped() {
+        let prober = MockStrategyProber::new()
+            .respond_to(
+                "HttpSimple",
+                Ok(FetchResponse {
+                    status: 403,
+                    headers: HashMap::new(),
+                    body: Vec::new(),
+                    content_type: "text/html".to_string(),
+                    latency: Duration::from_millis(50),
+                }),
+            )
+            .respond_to("TlsChrome", ok_response(200));
+
+        let strategies = vec![Strategy::HttpSimple, Strategy::TlsChrome];
+        let result = probe_with_strategies(&prober, "blocked.com", &strategies).await;
+
+        let winner = result.expect("should find TlsChrome");
+        assert_eq!(winner.strategy, Strategy::TlsChrome);
+    }
+
+    #[tokio::test]
+    async fn test_multi_probe_first_strategy_wins_when_fastest() {
+        let prober = MockStrategyProber::new()
+            .respond_to("HttpSimple", ok_response(200))
+            .respond_to("TlsChrome", ok_response(200));
+
+        let strategies = vec![Strategy::HttpSimple, Strategy::TlsChrome];
+        let result = probe_with_strategies(&prober, "fast.com", &strategies).await;
+
+        let winner = result.expect("should have a winner");
+        assert_eq!(winner.strategy, Strategy::HttpSimple);
+    }
+
+    #[tokio::test]
+    async fn test_probe_and_cache_caches_winner() {
+        let storage = Arc::new(Storage::open(":memory:").expect("in-memory storage"));
+        let prober = MockStrategyProber::new()
+            .respond_to("HttpSimple", Err(FetchError::Timeout))
+            .respond_to("TlsChrome", ok_response(200))
+            .respond_to("TlsMobile", ok_response(200))
+            .respond_to("Headless", ok_response(200));
+
+        let result = probe_and_cache(&prober, &storage, "newsite.com", &Strategy::HttpSimple).await;
+
+        assert_eq!(result, Some(Strategy::TlsChrome));
+
+        let cache = RouteCache::new(&storage);
+        let cached = cache
+            .get_best_strategy("newsite.com")
+            .expect("cache lookup");
+        assert!(cached.is_some());
+        let cached = cached.expect("should exist");
+        assert_eq!(cached.strategy, "TlsChrome");
+        assert!(cached.success_rate > 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_probe_and_cache_all_fail_caches_default() {
+        let storage = Arc::new(Storage::open(":memory:").expect("in-memory storage"));
+        let prober = MockStrategyProber::new()
+            .respond_to("HttpSimple", Err(FetchError::Timeout))
+            .respond_to(
+                "TlsChrome",
+                Err(FetchError::NetworkError("fail".to_string())),
+            )
+            .respond_to("TlsMobile", Err(FetchError::TlsError("fail".to_string())))
+            .respond_to(
+                "Headless",
+                Err(FetchError::BrowserError("fail".to_string())),
+            );
+
+        let result =
+            probe_and_cache(&prober, &storage, "deadzone.com", &Strategy::HttpSimple).await;
+
+        assert_eq!(result, Some(Strategy::HttpSimple));
+
+        let cache = RouteCache::new(&storage);
+        let cached = cache
+            .get_best_strategy("deadzone.com")
+            .expect("cache lookup");
+        assert!(cached.is_some());
+        let cached = cached.expect("should exist");
+        assert_eq!(cached.strategy, "HttpSimple");
+        assert_eq!(cached.success_rate, 0.0);
+    }
+
+    #[test]
+    fn test_is_probe_success_accepts_200() {
+        let resp = FetchResponse {
+            status: 200,
+            headers: HashMap::new(),
+            body: Vec::new(),
+            content_type: "text/html".to_string(),
+            latency: Duration::from_millis(50),
+        };
+        assert!(is_probe_success(&resp));
+    }
+
+    #[test]
+    fn test_is_probe_success_rejects_403() {
+        let resp = FetchResponse {
+            status: 403,
+            headers: HashMap::new(),
+            body: Vec::new(),
+            content_type: "text/html".to_string(),
+            latency: Duration::from_millis(50),
+        };
+        assert!(!is_probe_success(&resp));
+    }
+
+    #[test]
+    fn test_is_probe_success_rejects_503() {
+        let resp = FetchResponse {
+            status: 503,
+            headers: HashMap::new(),
+            body: Vec::new(),
+            content_type: "text/html".to_string(),
+            latency: Duration::from_millis(50),
+        };
+        assert!(!is_probe_success(&resp));
+    }
+
+    #[test]
+    fn test_is_probe_success_accepts_404() {
+        let resp = FetchResponse {
+            status: 404,
+            headers: HashMap::new(),
+            body: Vec::new(),
+            content_type: "text/html".to_string(),
+            latency: Duration::from_millis(50),
+        };
+        assert!(is_probe_success(&resp));
     }
 }

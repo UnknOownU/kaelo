@@ -85,7 +85,6 @@ pub(crate) fn parse_sections(markdown: &str) -> Vec<Section> {
         current_content.push_str(line);
     }
 
-    // Flush final section
     if !current_heading.is_empty() || !current_content.is_empty() {
         sections.push(Section {
             heading: current_heading,

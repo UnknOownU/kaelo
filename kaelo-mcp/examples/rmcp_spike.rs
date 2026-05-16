@@ -65,10 +65,6 @@ use anyhow::Result;
 use rmcp::{tool, tool_router, transport::stdio, ServiceExt};
 use tracing_subscriber::EnvFilter;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TOOL HANDLER DEFINITION
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// The MCP server handler. In production, this would hold state (route cache,
 /// fetch backends, etc.). For the spike, it's stateless.
 #[derive(Debug, Clone)]
@@ -131,10 +127,6 @@ impl KaeloSpike {
 //   - `list_tools()` → returns metadata for all #[tool] methods
 //   - `call_tool()` → dispatches to the right method by name
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN — Start the server on stdio transport
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Log to stderr so stdout is clean for MCP JSON-RPC traffic
@@ -145,14 +137,6 @@ async fn main() -> Result<()> {
         .init();
 
     tracing::info!("Starting Kaelo MCP spike server (rmcp v1.7.0)");
-
-    // ── Server lifecycle ──────────────────────────────────────────────────
-    // 1. Create handler instance
-    // 2. .serve(transport) — starts the MCP server on the given transport
-    // 3. .waiting().await — blocks until the client disconnects or errors
-    //
-    // `stdio()` returns (tokio::io::Stdin, tokio::io::Stdout)
-    // The server reads JSON-RPC from stdin, writes responses to stdout.
 
     let service = KaeloSpike.serve(stdio()).await.inspect_err(|e| {
         tracing::error!("Serving error: {:?}", e);

@@ -1,8 +1,3 @@
-//! Production MCP server for Kaelo.
-//!
-//! Uses `rmcp` with stdio transport. Provides tools for web fetching,
-//! searching, and cache management.
-
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -10,6 +5,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use kaelo_core::extraction;
+use kaelo_core::search::ddg::DuckDuckGoBackend;
+use kaelo_core::search::searxng::SearXngBackend;
+use kaelo_core::search::{SearchBackend, SearchResult};
 use kaelo_core::storage::content_cache::ContentCache;
 use kaelo_core::storage::route_cache::{FetchResult, RouteCache};
 use kaelo_core::storage::Storage;
@@ -19,10 +17,11 @@ use kaelo_fetch::backends::HttpSimple;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content};
 use rmcp::{tool, tool_handler, tool_router, transport::stdio, ErrorData, ServiceExt};
-use tracing_subscriber::EnvFilter;
 
 struct KaeloState {
     storage: Mutex<Storage>,
+    searxng_url: Option<String>,
+    search_backend: Option<String>,
 }
 
 impl fmt::Debug for KaeloState {
@@ -38,8 +37,18 @@ pub struct KaeloServer {
 
 impl KaeloServer {
     pub fn new(storage: Storage) -> Self {
+        Self::with_config(storage, None, None)
+    }
+
+    pub fn with_config(
+        storage: Storage,
+        searxng_url: Option<String>,
+        search_backend: Option<String>,
+    ) -> Self {
         let state = KaeloState {
             storage: Mutex::new(storage),
+            searxng_url,
+            search_backend,
         };
         Self {
             state: Arc::new(state),
@@ -58,7 +67,9 @@ impl Default for KaeloServer {
 pub struct WebFetchParams {
     /// The URL to fetch
     pub url: String,
-    /// Fetch strategy: "HttpSimple", "TlsChrome", "TlsMobile", "Headless", "PublicApi"
+    /// Fetch strategy. LEAVE EMPTY to let Kaelo auto-detect the best strategy
+    /// (recommended). Only set if you have a specific reason to force a backend.
+    /// Options: "HttpSimple", "TlsChrome", "TlsMobile", "Headless", "PublicApi"
     #[serde(default)]
     pub strategy: Option<String>,
     /// Maximum token budget (approximate character count / 4). 0 = no limit.
@@ -70,6 +81,10 @@ pub struct WebFetchParams {
     /// Skip cache and force fresh fetch
     #[serde(default)]
     pub no_cache: Option<bool>,
+    /// Browser session ID — pages in the same session share cookies/state.
+    /// Sessions expire after 5 min of inactivity. Max 3 concurrent sessions.
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -84,6 +99,18 @@ pub struct WebSearchParams {
     pub fetch_content: Option<bool>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct FetchUrlsParams {
+    /// List of URLs to fetch (max 10)
+    pub urls: Vec<String>,
+    /// Fetch strategy for all URLs: "HttpSimple", "TlsChrome", "TlsMobile", "Headless", "PublicApi"
+    #[serde(default)]
+    pub strategy: Option<String>,
+    /// Maximum token budget per URL (approximate character count / 4). 0 = no limit.
+    #[serde(default)]
+    pub token_budget: Option<u32>,
+}
+
 fn internal_err(msg: impl std::fmt::Display) -> ErrorData {
     ErrorData::internal_error(msg.to_string(), None)
 }
@@ -92,6 +119,7 @@ fn internal_err(msg: impl std::fmt::Display) -> ErrorData {
 async fn fetch_with_strategy(
     strategy: &Strategy,
     request: FetchRequest,
+    session_id: Option<String>,
 ) -> Result<FetchResponse, FetchError> {
     match strategy {
         Strategy::HttpSimple => HttpSimple::new()?.fetch(request).await,
@@ -108,7 +136,8 @@ async fn fetch_with_strategy(
         }
         Strategy::Headless => {
             use kaelo_fetch::backends::HeadlessBrowser;
-            HeadlessBrowser::new().await?.fetch(request).await
+            let browser = HeadlessBrowser::new().await?;
+            browser.fetch_with_session(request, session_id).await
         }
         Strategy::PublicApi => HttpSimple::new()?.fetch(request).await,
     }
@@ -212,8 +241,10 @@ impl KaeloServer {
         };
 
         let markdown = if let Some(content) = cached {
+            tracing::info!(url = %params.url, "Cache hit");
             content
         } else {
+            tracing::info!(url = %params.url, strategy = ?strategy, "Cache miss, fetching");
             let request = FetchRequest {
                 url: params.url.clone(),
                 headers: HashMap::new(),
@@ -222,10 +253,14 @@ impl KaeloServer {
             };
 
             let start = std::time::Instant::now();
-            let response = fetch_with_strategy(&strategy, request)
+            let response = fetch_with_strategy(&strategy, request, params.session.clone())
                 .await
-                .map_err(internal_err)?;
+                .map_err(|e| {
+                    tracing::error!(url = %params.url, strategy = ?strategy, error = %e, "Fetch failed");
+                    internal_err(e)
+                })?;
             let latency_ms = start.elapsed().as_millis() as u64;
+            tracing::info!(url = %params.url, strategy = ?strategy, latency_ms, "Fetch completed");
 
             let html = String::from_utf8_lossy(&response.body);
             let extracted = extraction::extract(&html, &params.url, &response.content_type)
@@ -270,9 +305,137 @@ impl KaeloServer {
             }
         }
 
-        let _ = &params.focus;
-
         Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(
+        name = "fetch_urls",
+        description = "Fetch multiple URLs in parallel and return combined Markdown content with --- separators"
+    )]
+    async fn fetch_urls(
+        &self,
+        Parameters(params): Parameters<FetchUrlsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        if params.urls.is_empty() {
+            return Err(internal_err("At least one URL required"));
+        }
+        if params.urls.len() > 10 {
+            return Err(internal_err("Maximum 10 URLs per batch"));
+        }
+
+        tracing::info!(urls = ?params.urls, "Batch fetching {} URLs", params.urls.len());
+
+        let state = self.state.clone();
+        let strategy_name = params.strategy;
+        let token_budget = params.token_budget;
+
+        let mut handles: Vec<tokio::task::JoinHandle<String>> = Vec::new();
+
+        for url in params.urls {
+            let state = state.clone();
+            let strategy_name = strategy_name.clone();
+
+            handles.push(tokio::spawn(async move {
+                let (cached, strategy) = {
+                    let storage = match state.storage.lock() {
+                        Ok(s) => s,
+                        Err(e) => return format!("[error: {e}]"),
+                    };
+                    let cached = check_content_cache(&storage, &url);
+                    let strategy = match &strategy_name {
+                        Some(s) => parse_strategy_name(s).unwrap_or(Strategy::HttpSimple),
+                        None => resolve_strategy(&storage, &url).strategy,
+                    };
+                    (cached, strategy)
+                };
+
+                let markdown = match cached {
+                    Some(content) => {
+                        tracing::info!(url = %url, "Cache hit");
+                        content
+                    }
+                    None => {
+                        let request = FetchRequest {
+                            url: url.clone(),
+                            headers: HashMap::new(),
+                            timeout: Duration::from_secs(30),
+                            follow_redirects: true,
+                        };
+
+                        let start = std::time::Instant::now();
+                        let response = match fetch_with_strategy(&strategy, request, None).await {
+                            Ok(r) => r,
+                            Err(e) => {
+                                tracing::error!(url = %url, strategy = ?strategy, error = %e, "Batch fetch failed");
+                                return format!("[fetch error for {url}: {e}]");
+                            }
+                        };
+                        let latency_ms = start.elapsed().as_millis() as u64;
+                        tracing::info!(url = %url, strategy = ?strategy, latency_ms, "Batch fetch completed");
+
+                        let html = String::from_utf8_lossy(&response.body);
+                        let extracted =
+                            match extraction::extract(&html, &url, &response.content_type) {
+                                Ok(Some(e)) => e.text_content,
+                                Ok(None) => html.into_owned(),
+                                Err(e) => return format!("[extraction error for {url}: {e}]"),
+                            };
+
+                        let domain = url.split('/').nth(2).unwrap_or("unknown").to_string();
+
+                        {
+                            if let Ok(storage) = state.storage.lock() {
+                                store_and_record(
+                                    &storage,
+                                    &url,
+                                    &domain,
+                                    &strategy,
+                                    &extracted,
+                                    &response.content_type,
+                                    latency_ms,
+                                    response.status,
+                                );
+                            }
+                        }
+
+                        extracted
+                    }
+                };
+
+                let mut result = markdown;
+                if let Some(budget) = token_budget {
+                    if budget > 0 {
+                        let max_chars = (budget as usize) * 4;
+                        if result.len() > max_chars {
+                            result.truncate(max_chars);
+                            result.push_str("\n\n[... truncated to fit token budget]");
+                        }
+                    }
+                }
+
+                result
+            }));
+        }
+
+        let mut combined = String::new();
+        for handle in handles {
+            match handle.await {
+                Ok(content) => {
+                    if !combined.is_empty() {
+                        combined.push_str("\n\n---\n\n");
+                    }
+                    combined.push_str(&content);
+                }
+                Err(e) => {
+                    if !combined.is_empty() {
+                        combined.push_str("\n\n---\n\n");
+                    }
+                    combined.push_str(&format!("[task error: {e}]"));
+                }
+            }
+        }
+
+        Ok(CallToolResult::success(vec![Content::text(combined)]))
     }
 
     #[tool(name = "ping", description = "Health check — returns pong")]
@@ -341,24 +504,11 @@ impl KaeloServer {
         let max = params.max_results.unwrap_or(5).min(10) as usize;
         let query = params.query.clone();
         let fetch_content = params.fetch_content.unwrap_or(false);
+        let backend = self.state.search_backend.as_deref().unwrap_or("ddg");
 
-        let ddg_url = format!(
-            "https://html.duckduckgo.com/html/?q={}",
-            urlencoding(&query)
-        );
-
-        let backend = HttpSimple::new().map_err(internal_err)?;
-        let request = FetchRequest {
-            url: ddg_url,
-            headers: HashMap::new(),
-            timeout: Duration::from_secs(15),
-            follow_redirects: true,
-        };
-
-        let response = backend.fetch(request).await.map_err(internal_err)?;
-
-        let html = String::from_utf8_lossy(&response.body);
-        let results = parse_ddg_results(&html, max);
+        tracing::info!(query = %query, max, backend, "Searching");
+        let results = self.search_with_fallback(&query, max).await?;
+        tracing::info!(query = %query, results = results.len(), "Search completed");
 
         if results.is_empty() {
             return Ok(CallToolResult::success(vec![Content::text(
@@ -368,8 +518,13 @@ impl KaeloServer {
 
         if !fetch_content {
             let mut output = String::new();
-            for (i, (title, url)) in results.iter().enumerate() {
-                output.push_str(&format!("{}. {}\n   {}\n\n", i + 1, title, url));
+            for (i, result) in results.iter().enumerate() {
+                output.push_str(&format!(
+                    "{}. {}\n   {}\n\n",
+                    i + 1,
+                    result.title,
+                    result.url
+                ));
             }
             return Ok(CallToolResult::success(vec![Content::text(output)]));
         }
@@ -377,13 +532,13 @@ impl KaeloServer {
         let fetch_limit = results.len().min(3);
         let mut output = String::new();
 
-        for (i, (title, url)) in results.iter().take(fetch_limit).enumerate() {
-            output.push_str(&format!("## {} - {}\n\n", i + 1, title));
+        for (i, result) in results.iter().take(fetch_limit).enumerate() {
+            output.push_str(&format!("## {} - {}\n\n", i + 1, result.title));
 
             let (cached, resolved) = {
                 let storage = self.state.storage.lock().map_err(internal_err)?;
-                let cached = check_content_cache(&storage, url);
-                let resolved = resolve_strategy(&storage, url);
+                let cached = check_content_cache(&storage, &result.url);
+                let resolved = resolve_strategy(&storage, &result.url);
                 (cached, resolved)
             };
 
@@ -393,18 +548,18 @@ impl KaeloServer {
                 output.push_str("\n\n");
             } else {
                 let req = FetchRequest {
-                    url: url.clone(),
+                    url: result.url.clone(),
                     headers: HashMap::new(),
                     timeout: Duration::from_secs(30),
                     follow_redirects: true,
                 };
 
                 let start = std::time::Instant::now();
-                match fetch_with_strategy(&resolved.strategy, req).await {
+                match fetch_with_strategy(&resolved.strategy, req, None).await {
                     Ok(resp) => {
                         let latency_ms = start.elapsed().as_millis() as u64;
                         let body = String::from_utf8_lossy(&resp.body);
-                        let extracted = extraction::extract(&body, url, &resp.content_type)
+                        let extracted = extraction::extract(&body, &result.url, &resp.content_type)
                             .map_err(|e| internal_err(format!("extraction error: {e}")))?;
 
                         let content = extracted
@@ -415,7 +570,7 @@ impl KaeloServer {
                             let storage = self.state.storage.lock().map_err(internal_err)?;
                             store_and_record(
                                 &storage,
-                                url,
+                                &result.url,
                                 &resolved.domain,
                                 &resolved.strategy,
                                 &content,
@@ -430,14 +585,20 @@ impl KaeloServer {
                         output.push_str("\n\n");
                     }
                     Err(e) => {
+                        tracing::error!(url = %result.url, error = %e, "Search result fetch failed");
                         output.push_str(&format!("Failed to fetch: {e}\n\n"));
                     }
                 }
             }
         }
 
-        for (i, (title, url)) in results.iter().skip(fetch_limit).enumerate() {
-            output.push_str(&format!("{}. {} — {}\n", fetch_limit + i + 1, title, url));
+        for (i, result) in results.iter().skip(fetch_limit).enumerate() {
+            output.push_str(&format!(
+                "{}. {} — {}\n",
+                fetch_limit + i + 1,
+                result.title,
+                result.url
+            ));
         }
 
         Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -455,122 +616,40 @@ fn truncate_preview(content: &str, max_len: usize) -> String {
     }
 }
 
-fn urlencoding(s: &str) -> String {
-    let mut encoded = String::new();
-    for byte in s.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char);
-            }
-            b' ' => encoded.push('+'),
-            _ => {
-                encoded.push_str(&format!("%{:02X}", byte));
+impl KaeloServer {
+    async fn search_with_fallback(
+        &self,
+        query: &str,
+        max_results: usize,
+    ) -> Result<Vec<SearchResult>, ErrorData> {
+        let use_searxng = self.state.search_backend.as_deref() == Some("searxng")
+            && self.state.searxng_url.is_some();
+
+        if use_searxng {
+            if let Some(ref url) = self.state.searxng_url {
+                match SearXngBackend::new(url.clone()) {
+                    Ok(backend) => match backend.search(query, max_results).await {
+                        Ok(results) if !results.is_empty() => return Ok(results),
+                        Ok(_) => {
+                            tracing::warn!("SearXNG returned empty results, falling back to DDG");
+                        }
+                        Err(e) => {
+                            tracing::warn!("SearXNG error, falling back to DDG: {e}");
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("SearXNG init error, falling back to DDG: {e}");
+                    }
+                }
             }
         }
+
+        let ddg = DuckDuckGoBackend::new().map_err(internal_err)?;
+        ddg.search(query, max_results).await.map_err(internal_err)
     }
-    encoded
-}
-
-fn parse_ddg_results(html: &str, max: usize) -> Vec<(String, String)> {
-    let mut results = Vec::new();
-    let mut pos = 0;
-
-    while results.len() < max {
-        let result_start = match html[pos..].find("class=\"result__a\"") {
-            Some(i) => pos + i,
-            None => break,
-        };
-
-        let title = extract_tag_content(html, result_start);
-
-        let href_start = match html[..result_start].rfind("href=\"") {
-            Some(i) => i + 6,
-            None => {
-                pos = result_start + 16;
-                continue;
-            }
-        };
-
-        let href_end = match html[href_start..].find('"') {
-            Some(i) => href_start + i,
-            None => {
-                pos = result_start + 16;
-                continue;
-            }
-        };
-
-        let href = html[href_start..href_end].to_string();
-        let url = clean_ddg_url(&href);
-
-        if url.starts_with("http") {
-            results.push((title, url));
-        }
-
-        pos = result_start + 16;
-    }
-
-    results
-}
-
-fn extract_tag_content(html: &str, tag_pos: usize) -> String {
-    let after_tag = match html[tag_pos..].find('>') {
-        Some(i) => tag_pos + i + 1,
-        None => return String::new(),
-    };
-
-    let end = match html[after_tag..].find('<') {
-        Some(i) => after_tag + i,
-        None => return html[after_tag..].to_string(),
-    };
-
-    html[after_tag..end]
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .trim()
-        .to_string()
-}
-
-fn clean_ddg_url(url: &str) -> String {
-    if let Some(start) = url.find("uddg=") {
-        let encoded = &url[start + 5..];
-        let end = encoded.find('&').unwrap_or(encoded.len());
-        let encoded_portion = &encoded[..end];
-        match percent_decode(encoded_portion) {
-            Some(decoded) => return decoded,
-            None => return encoded_portion.to_string(),
-        }
-    }
-    url.strip_prefix("//")
-        .map(|s| format!("https://{s}"))
-        .unwrap_or_else(|| url.to_string())
-}
-
-fn percent_decode(s: &str) -> Option<String> {
-    let mut result = String::new();
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            let hi = chars.next()?.to_digit(16)? as u8;
-            let lo = chars.next()?.to_digit(16)? as u8;
-            result.push(char::from((hi << 4) | lo));
-        } else if c == '+' {
-            result.push(' ');
-        } else {
-            result.push(c);
-        }
-    }
-    Some(result)
 }
 
 pub async fn serve_stdio(server: KaeloServer) -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
-        .init();
-
     tracing::info!("Starting Kaelo MCP server");
 
     let service = server.serve(stdio()).await.inspect_err(|e| {

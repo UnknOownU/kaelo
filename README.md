@@ -144,12 +144,13 @@ That's it. Kaelo auto-starts with your agent session.
 
 ## MCP Tools
 
-**Available (v0.1):**
+**Available (v0.2):**
 
 | Tool | Description | Key Parameters |
 |---|---|---|
 | `web_fetch` | Fetch a URL, return clean Markdown | url, strategy, token_budget, focus, no_cache |
-| `web_search` | Search DuckDuckGo, optionally fetch top results | query, max_results, fetch_content |
+| `web_search` | Search DuckDuckGo (or SearXNG), optionally fetch top results | query, max_results, fetch_content |
+| `fetch_urls` | Batch fetch multiple URLs in one call | urls (max 10), strategy, token_budget |
 | `cache_status` | Show cache statistics | — |
 | `cache_clear` | Clear cached content | — |
 | `ping` | Health check — returns pong | — |
@@ -162,7 +163,7 @@ That's it. Kaelo auto-starts with your agent session.
 | `TlsChrome` | wreq (TLS impersonation) | Cloudflare-protected sites |
 | `TlsMobile` | wreq (mobile TLS) | Sites that block desktop bots |
 | `Headless` | chromiumoxide | JS-heavy SPAs (React, Next.js, Vue) |
-| `PublicApi` | (planned) | Reddit, HN, YouTube native APIs |
+| `PublicApi` | native HTTP | Reddit, HN, YouTube native APIs |
 
 Kaelo auto-selects the best strategy per domain using its route cache. You can force a specific strategy via the `strategy` parameter:
 
@@ -183,6 +184,10 @@ kaelo cache status              # Show cache size, entries, top domains
 kaelo cache clear               # Clear everything
 kaelo cache clear --domain X    # Clear specific domain
 kaelo cache clear --older-than 24h  # Clear old entries
+kaelo cache export <path>       # Export route cache to JSON
+kaelo cache import <path>       # Import route cache from JSON
+kaelo cache show-auth           # Show stored per-domain auth
+kaelo cache forget-auth <domain> # Remove stored auth for a domain
 ```
 
 ## Configuration
@@ -222,9 +227,23 @@ KAELO_CACHE_COMPRESSION=gzip    # Compress cached content
 | **Token-aware** | ✅ budget, focus | ❌ | ✅ content scoring | ❌ |
 | **Local & free** | ✅ MIT | ✅ MIT | ✅ MIT | ✅ MIT |
 
+## v0.2 Features
+
+| Feature | Description |
+|---|---|
+| Smart truncation | Section-aware content truncation that preserves important content |
+| Config TOML | Full configuration via `~/.config/kaelo/config.toml` |
+| Browser pooling | Reusable browser instances with anti-bot fingerprinting (realistic UAs, random viewports, webdriver stealth) |
+| Route cache export/import | Share learned strategies between machines via JSON export/import |
+| Smart probing | Intelligent strategy probing with domain-scoped learning |
+| Batch fetch | Fetch up to 10 URLs in a single MCP call via `fetch_urls` |
+| SearXNG backend | Optional SearXNG search backend (falls back to DuckDuckGo) |
+| TLS impersonation | `TlsChrome` and `TlsMobile` strategies for anti-bot bypass |
+| Public API backend | Native API backends for Reddit, HN, YouTube |
+
 ## Status
 
-**Beta (v0.1).** Core fetching (HTTP, TLS, headless browser), route cache, content cache, web search, MCP server, CLI — all functional. Tested against static sites, Cloudflare-protected sites, and JS-heavy SPAs (RSI Galactapedia).
+**Beta (v0.2).** Multi-strategy fetching (HTTP, TLS impersonation, headless browser), public API backends, route cache with export/import, batch fetch, SearXNG search, anti-bot fingerprinting, content cache, web search, MCP server, CLI — all functional.
 
 See [PRD.md](./PRD.md) for full product vision.
 

@@ -1,6 +1,6 @@
 [package]
 name = "kaelo-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -15,6 +15,7 @@ flate2 = "1"
 sha2 = "0.10"
 dom_smoothie = "0.17"
 toml = "0.8"
+reqwest = { version = "0.12", default-features = true }
 
 [dev-dependencies]
 dom_smoothie = "0.17"

@@ -1,77 +1,105 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Instant;
 
-use chromiumoxide::browser::{Browser, BrowserConfig};
-use futures::StreamExt;
 use kaelo_core::types::{FetchError, FetchRequest, FetchResponse, Strategy};
 
+use super::browser_pool::{random_viewport, BrowserPool, WEBDRIVER_HIDE_JS};
 use crate::backend::FetchBackend;
 
+static POOL: OnceLock<BrowserPool> = OnceLock::new();
+
+const WAIT_FOR_CONTENT_JS: &str = r#"(function() {
+  var body = document.body;
+  if (!body) return Promise.resolve(false);
+  if (body.innerText.trim().length > 100 && body.children.length > 1) return Promise.resolve(true);
+  return new Promise(function(resolve) {
+    var timeout = setTimeout(function() { resolve(false); }, 8000);
+    var debounce = null;
+    var observer = new MutationObserver(function() {
+      clearTimeout(debounce);
+      debounce = setTimeout(function() {
+        if (body.innerText.trim().length > 100 && body.children.length > 1) {
+          clearTimeout(timeout);
+          observer.disconnect();
+          resolve(true);
+        }
+      }, 500);
+    });
+    observer.observe(body, { childList: true, subtree: true });
+  });
+})()"#;
+
+/// Shut down the global browser pool, closing all Chrome processes and sessions.
+///
+/// Safe to call even if the pool was never initialized (no-op in that case).
+pub async fn shutdown_browser_pool() {
+    if let Some(pool) = POOL.get() {
+        pool.shutdown().await;
+    }
+}
+
 pub struct HeadlessBrowser {
-    browser: Arc<Browser>,
-    _handler: Arc<tokio::task::JoinHandle<()>>,
+    pool: BrowserPool,
 }
 
 impl HeadlessBrowser {
     pub async fn new() -> Result<Self, FetchError> {
-        let config = BrowserConfig::builder()
-            .build()
-            .map_err(|e| FetchError::BrowserError(format!("failed to build browser config: {e}")))?;
-
-        let (browser, mut handler) = Browser::launch(config).await.map_err(|e| {
-            FetchError::BrowserError(format!(
-                "failed to launch Chrome — is Chromium installed? {e}"
-            ))
-        })?;
-
-        let handler_handle = tokio::spawn(async move {
-            while let Some(event) = handler.next().await {
-                if event.is_err() {
-                    break;
-                }
-            }
-        });
-
-        Ok(Self {
-            browser: Arc::new(browser),
-            _handler: Arc::new(handler_handle),
-        })
+        let pool = POOL.get_or_init(BrowserPool::new);
+        Ok(Self { pool: pool.clone() })
     }
-}
 
-impl FetchBackend for HeadlessBrowser {
-    async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, FetchError> {
+    pub async fn fetch_with_session(
+        &self,
+        request: FetchRequest,
+        session_id: Option<String>,
+    ) -> Result<FetchResponse, FetchError> {
         let start = Instant::now();
         let timeout = request.timeout;
 
         let result = tokio::time::timeout(timeout, async {
-            let page = self
-                .browser
-                .new_page(&request.url)
-                .await
-                .map_err(|e| FetchError::BrowserError(format!("failed to open page: {e}")))?;
+            let page = match &session_id {
+                Some(sid) => {
+                    self.pool
+                        .get_or_create_session(sid, &request.url)
+                        .await?
+                }
+                None => self.pool.get_page(&request.url).await?,
+            };
+
+            let (vp_w, vp_h) = random_viewport();
+            let set_viewport_js =
+                format!("Object.defineProperty(screen, 'width', {{get: () => {vp_w}}}); \
+                         Object.defineProperty(screen, 'height', {{get: () => {vp_h}}})");
+            let _ = page.evaluate(set_viewport_js).await;
+
+            let _ = page.evaluate(WEBDRIVER_HIDE_JS).await;
 
             page.wait_for_navigation()
                 .await
                 .map_err(|e| FetchError::BrowserError(format!("navigation failed: {e}")))?;
 
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
             let _ = page
                 .evaluate(r#"document.querySelector('[aria-label="Accept"], .accept-cookies, #accept-cookies, button[mode="primary"]')?.click()"#)
                 .await;
 
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            if let Err(e) = page.evaluate(WAIT_FOR_CONTENT_JS).await {
+                tracing::warn!("SPA wait failed, falling back to sleep: {e}");
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
 
             let html = page
                 .content()
                 .await
                 .map_err(|e| FetchError::BrowserError(format!("failed to get page content: {e}")))?;
 
-            page.close()
-                .await
-                .map_err(|e| FetchError::BrowserError(format!("failed to close page: {e}")))?;
+            if session_id.is_none() {
+                page.close()
+                    .await
+                    .map_err(|e| FetchError::BrowserError(format!("failed to close page: {e}")))?;
+            }
 
             Ok::<String, FetchError>(html)
         })
@@ -93,6 +121,12 @@ impl FetchBackend for HeadlessBrowser {
             latency,
         })
     }
+}
+
+impl FetchBackend for HeadlessBrowser {
+    async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, FetchError> {
+        self.fetch_with_session(request, None).await
+    }
 
     fn name(&self) -> Strategy {
         Strategy::Headless
@@ -103,9 +137,6 @@ impl FetchBackend for HeadlessBrowser {
     }
 }
 
-// TODO: Browser pooling — currently launches Chrome per request (2-3s overhead).
-// Add a shared BrowserPool that reuses a single browser instance across requests.
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,11 +145,43 @@ mod tests {
     #[ignore = "requires Chromium installed"]
     async fn test_headless_new() {
         let browser = HeadlessBrowser::new().await;
-        assert!(browser.is_ok(), "failed to launch headless browser");
+        assert!(browser.is_ok(), "failed to create headless browser");
     }
 
-    #[test]
-    fn test_headless_name_returns_correct_strategy() {
-        assert_eq!(Strategy::Headless, Strategy::Headless);
+    #[tokio::test]
+    #[ignore = "requires Chromium installed"]
+    async fn test_stateless_fetch_closes_page() {
+        let browser = HeadlessBrowser::new().await.unwrap();
+        let request = FetchRequest {
+            url: "about:blank".to_string(),
+            headers: HashMap::new(),
+            timeout: std::time::Duration::from_secs(30),
+            follow_redirects: true,
+        };
+        let result = browser.fetch(request).await;
+        assert!(result.is_ok(), "stateless fetch should succeed");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Chromium installed"]
+    async fn test_session_fetch_reuses_page() {
+        let browser = HeadlessBrowser::new().await.unwrap();
+        let request = FetchRequest {
+            url: "about:blank".to_string(),
+            headers: HashMap::new(),
+            timeout: std::time::Duration::from_secs(30),
+            follow_redirects: true,
+        };
+
+        let r1 = browser
+            .fetch_with_session(request.clone(), Some("test-session".to_string()))
+            .await;
+        let r2 = browser
+            .fetch_with_session(request, Some("test-session".to_string()))
+            .await;
+        assert!(r1.is_ok(), "first session fetch should succeed");
+        assert!(r2.is_ok(), "second session fetch should succeed");
+
+        browser.pool.close_session("test-session").await;
     }
 }

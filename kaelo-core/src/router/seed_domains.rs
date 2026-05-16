@@ -17,13 +17,13 @@ pub const SEED_DOMAINS: &[SeedDomain] = &[
     },
     SeedDomain {
         domain: "reddit.com",
-        strategy: "TlsChrome",
-        notes: "Cloudflare; has PublicApi too",
+        strategy: "PublicApi",
+        notes: "JSON API avoids Cloudflare",
     },
     SeedDomain {
         domain: "old.reddit.com",
-        strategy: "TlsChrome",
-        notes: "Cloudflare",
+        strategy: "PublicApi",
+        notes: "JSON API avoids Cloudflare",
     },
     SeedDomain {
         domain: "notion.so",
@@ -244,6 +244,26 @@ pub const SEED_DOMAINS: &[SeedDomain] = &[
         domain: "news.ycombinator.com",
         strategy: "PublicApi",
         notes: "HN official domain",
+    },
+    SeedDomain {
+        domain: "youtube.com",
+        strategy: "PublicApi",
+        notes: "noembed metadata API",
+    },
+    SeedDomain {
+        domain: "www.youtube.com",
+        strategy: "PublicApi",
+        notes: "YouTube www subdomain",
+    },
+    SeedDomain {
+        domain: "youtu.be",
+        strategy: "PublicApi",
+        notes: "YouTube short URL",
+    },
+    SeedDomain {
+        domain: "m.youtube.com",
+        strategy: "PublicApi",
+        notes: "YouTube mobile URL",
     },
     SeedDomain {
         domain: "crates.io",

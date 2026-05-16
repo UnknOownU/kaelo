@@ -19,7 +19,6 @@ impl TokenEstimator {
             return (text.to_string(), false);
         }
 
-        // Extract all headings for TOC
         let headings: Vec<&str> = text.lines().filter(|l| l.trim().starts_with('#')).collect();
 
         let mut result = String::new();
@@ -53,6 +52,98 @@ impl TokenEstimator {
         }
 
         (result, true)
+    }
+
+    pub fn truncate(content: &str, max_tokens: usize) -> String {
+        let max_chars = max_tokens * 4;
+        let marker = "\n\n[... truncated ...]";
+        let marker_chars = marker.len();
+        let usable_chars = max_chars.saturating_sub(marker_chars);
+
+        if content.len() <= max_chars {
+            return content.to_string();
+        }
+
+        let sections = Self::split_into_sections(content);
+
+        if sections.len() <= 1 {
+            if usable_chars >= content.len() {
+                return content.to_string();
+            }
+            let cut = &content[..usable_chars.min(content.len())];
+            return format!("{}{marker}", cut.trim_end());
+        }
+
+        let scored: Vec<(usize, &str, f32)> = sections
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let mut score = 0.0f32;
+                if i == 0 {
+                    score += 100.0;
+                }
+                if s.contains("```") {
+                    score += 30.0;
+                }
+                if s.trim().starts_with('#') {
+                    score += 10.0;
+                }
+                score -= (s.len() as f32).log2() * 2.0;
+                (i, *s, score)
+            })
+            .collect();
+
+        let mut sorted: Vec<(usize, &str, f32)> = scored.into_iter().collect();
+        sorted.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by_key(|(i, _, _)| *i);
+
+        let mut included: Vec<&str> = Vec::new();
+        let mut total_chars: usize = 0;
+
+        for &(_, section, _) in &sorted {
+            let needed = if included.is_empty() {
+                section.len()
+            } else {
+                section.len() + 2
+            };
+            if total_chars + needed <= usable_chars {
+                included.push(section);
+                total_chars += needed;
+            }
+        }
+
+        included.sort_by_key(|s| content.find(*s).unwrap_or(0));
+
+        let mut result = included.join("\n\n");
+        if result.len() < content.len() {
+            result.push_str(marker);
+        }
+
+        result
+    }
+
+    fn split_into_sections(content: &str) -> Vec<&str> {
+        let has_h2 = content.contains("\n## ");
+        if has_h2 {
+            let mut sections: Vec<&str> = Vec::new();
+            let mut last = 0;
+            for (i, _) in content.match_indices("\n## ") {
+                if last < i {
+                    sections.push(&content[last..i]);
+                }
+                last = i + 1;
+            }
+            if last < content.len() {
+                sections.push(&content[last..]);
+            }
+            if sections.is_empty() {
+                vec![content]
+            } else {
+                sections
+            }
+        } else {
+            content.split("\n\n").collect()
+        }
     }
 
     /// Truncate text to fit within `budget` tokens, breaking at paragraph → sentence → word boundary.
@@ -193,5 +284,62 @@ mod tests {
             !result.contains("# Second"),
             "should stop before second heading"
         );
+    }
+
+    #[test]
+    fn truncate_within_budget_returns_unchanged() {
+        let text = "Short content that fits easily.";
+        let result = TokenEstimator::truncate(text, 1000);
+        assert_eq!(result, text);
+    }
+
+    #[test]
+    fn truncate_section_aware_cuts_at_heading_boundary() {
+        let text = "# Intro\n\nIntro paragraph.\n\n## Section One\n\nSome prose here.\n\n## Section Two\n\n".to_string()
+            + &"more text ".repeat(200)
+            + "\n\n## Section Three\n\nFinal section.";
+        let budget = 100;
+        let result = TokenEstimator::truncate(&text, budget);
+        assert!(result.contains("# Intro"), "must keep intro");
+        assert!(result.contains("## Section One"), "must keep section one");
+        assert!(
+            result.contains("[... truncated ...]"),
+            "must have truncation marker: {result}"
+        );
+    }
+
+    #[test]
+    fn truncate_preserves_code_sections_over_prose() {
+        let code_block = "```\nfn main() { println!(\"hello\"); }\n```";
+        let prose = &"lorem ipsum ".repeat(200);
+        let text = format!("# Intro\n\n{prose}\n\n## Code\n\n{code_block}");
+        let budget = 80;
+        let result = TokenEstimator::truncate(&text, budget);
+        assert!(
+            result.contains("```"),
+            "code blocks should get priority bonus: {result}"
+        );
+        assert!(result.contains("[... truncated ...]"));
+    }
+
+    #[test]
+    fn truncate_marker_present_when_cut() {
+        let text = "a".repeat(1000);
+        let result = TokenEstimator::truncate(&text, 10);
+        assert!(result.contains("[... truncated ...]"));
+        assert!(result.len() < text.len());
+    }
+
+    #[test]
+    fn truncate_empty_content() {
+        let result = TokenEstimator::truncate("", 100);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn truncate_zero_budget() {
+        let text = "Some content here.";
+        let result = TokenEstimator::truncate(text, 0);
+        assert!(result.contains("[... truncated ...]") || result.is_empty());
     }
 }

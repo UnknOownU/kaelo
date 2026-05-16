@@ -9,16 +9,10 @@ use std::collections::HashMap;
 
 use sha2::{Digest, Sha256};
 
-/// Minimum number of page appearances for a block to be considered boilerplate.
 const BOILERPLATE_THRESHOLD: u32 = 3;
 
-/// Maximum block size (in characters) to track. Larger blocks are unlikely
-/// to be repeated boilerplate — they are probably unique content.
+/// Larger blocks are probably unique content, not boilerplate.
 const MAX_BLOCK_CHARS: usize = 2000;
-
-// ---------------------------------------------------------------------------
-// BoilerplateTracker
-// ---------------------------------------------------------------------------
 
 /// In-memory tracker that accumulates per-domain block frequencies and
 /// identifies boilerplate blocks once seen on enough distinct pages.
@@ -28,7 +22,6 @@ pub struct BoilerplateTracker {
     /// Pre-computed boilerplate set per domain for fast lookups.
     /// Lazily rebuilt when frequencies change.
     boilerplate: HashMap<String, HashMap<String, ()>>,
-    /// Whether the boilerplate cache needs rebuilding.
     dirty: HashMap<String, bool>,
 }
 
@@ -72,7 +65,6 @@ impl BoilerplateTracker {
             return false;
         }
 
-        // Ensure boilerplate set is up-to-date.
         if self.dirty.get(domain).copied().unwrap_or(false) {
             self.rebuild_boilerplate(domain);
         }
@@ -112,8 +104,6 @@ impl BoilerplateTracker {
         self.dirty.remove(domain);
     }
 
-    // ---- internal ----
-
     fn rebuild_boilerplate(&mut self, domain: &str) {
         let set = self
             .frequencies
@@ -132,19 +122,11 @@ impl BoilerplateTracker {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     format!("{:x}", hasher.finalize())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

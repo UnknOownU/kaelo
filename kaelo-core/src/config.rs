@@ -36,6 +36,9 @@ pub struct Config {
     pub db_path: PathBuf,
     pub log_level: String,
     pub per_domain_auth: HashMap<String, AuthConfig>,
+    pub searxng_url: Option<String>,
+    pub search_backend: Option<String>,
+    pub default_strategy: Option<String>,
 }
 
 fn parse_bool(val: &str) -> bool {
@@ -120,6 +123,9 @@ impl Config {
                 .unwrap_or_else(|_| default_db_path()),
             log_level: env::var("KAELO_LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
             per_domain_auth: parse_auth_from_env(),
+            searxng_url: env::var("KAELO_SEARXNG_URL").ok(),
+            search_backend: env::var("KAELO_SEARCH_BACKEND").ok(),
+            default_strategy: env::var("KAELO_DEFAULT_STRATEGY").ok(),
         }
     }
 
@@ -130,7 +136,6 @@ impl Config {
         let value: toml::Value = toml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("Failed to parse TOML config: {}", e))?;
 
-        // 1. Start with defaults
         let mut config = Config {
             cache_enabled: true,
             cache_max_size: 52_428_800,
@@ -140,9 +145,11 @@ impl Config {
             db_path: default_db_path(),
             log_level: "info".to_string(),
             per_domain_auth: HashMap::new(),
+            searxng_url: None,
+            search_backend: None,
+            default_strategy: None,
         };
 
-        // 2. Override with file values
         if let Some(v) = value.get("cache_enabled").and_then(|v| v.as_bool()) {
             config.cache_enabled = v;
         }
@@ -164,8 +171,16 @@ impl Config {
         if let Some(v) = value.get("log_level").and_then(|v| v.as_str()) {
             config.log_level = v.to_string();
         }
+        if let Some(v) = value.get("searxng_url").and_then(|v| v.as_str()) {
+            config.searxng_url = Some(v.to_string());
+        }
+        if let Some(v) = value.get("search_backend").and_then(|v| v.as_str()) {
+            config.search_backend = Some(v.to_string());
+        }
+        if let Some(v) = value.get("default_strategy").and_then(|v| v.as_str()) {
+            config.default_strategy = Some(v.to_string());
+        }
 
-        // 3. Override with env vars (env wins over file)
         if let Ok(v) = env::var("KAELO_CACHE_ENABLED") {
             config.cache_enabled = parse_bool(&v);
         }
@@ -192,6 +207,15 @@ impl Config {
         }
         if let Ok(v) = env::var("KAELO_LOG_LEVEL") {
             config.log_level = v;
+        }
+        if let Ok(v) = env::var("KAELO_SEARXNG_URL") {
+            config.searxng_url = Some(v);
+        }
+        if let Ok(v) = env::var("KAELO_SEARCH_BACKEND") {
+            config.search_backend = Some(v);
+        }
+        if let Ok(v) = env::var("KAELO_DEFAULT_STRATEGY") {
+            config.default_strategy = Some(v);
         }
         let env_auth = parse_auth_from_env();
         if !env_auth.is_empty() {
@@ -438,5 +462,67 @@ mod tests {
     fn test_missing_file_returns_error() {
         let config = Config::from_file(std::path::Path::new("/nonexistent/config.toml"));
         assert!(config.is_err());
+    }
+
+    #[test]
+    fn test_new_fields_default_to_none() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        unset_kaelo_vars();
+        let config = Config::from_env();
+        assert_eq!(config.searxng_url, None);
+        assert_eq!(config.search_backend, None);
+        assert_eq!(config.default_strategy, None);
+        unset_kaelo_vars();
+    }
+
+    #[test]
+    fn test_new_fields_from_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        unset_kaelo_vars();
+        env::set_var("KAELO_SEARXNG_URL", "https://search.example.com");
+        env::set_var("KAELO_SEARCH_BACKEND", "searxng");
+        env::set_var("KAELO_DEFAULT_STRATEGY", "tls_mobile");
+        let config = Config::from_env();
+        assert_eq!(
+            config.searxng_url,
+            Some("https://search.example.com".to_string())
+        );
+        assert_eq!(config.search_backend, Some("searxng".to_string()));
+        assert_eq!(config.default_strategy, Some("tls_mobile".to_string()));
+        unset_kaelo_vars();
+    }
+
+    #[test]
+    fn test_new_fields_from_toml() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        unset_kaelo_vars();
+        let path = std::path::Path::new("/tmp/kaelo-test-new-fields.toml");
+        std::fs::write(
+            path,
+            "searxng_url = \"https://my.searx.com\"\nsearch_backend = \"duckduckgo\"\ndefault_strategy = \"http\"",
+        )
+        .unwrap();
+        let config = Config::from_file(path).unwrap();
+        assert_eq!(config.searxng_url, Some("https://my.searx.com".to_string()));
+        assert_eq!(config.search_backend, Some("duckduckgo".to_string()));
+        assert_eq!(config.default_strategy, Some("http".to_string()));
+        std::fs::remove_file(path).ok();
+        unset_kaelo_vars();
+    }
+
+    #[test]
+    fn test_new_fields_env_overrides_toml() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        unset_kaelo_vars();
+        env::set_var("KAELO_SEARXNG_URL", "https://env.example.com");
+        let path = std::path::Path::new("/tmp/kaelo-test-env-toml.toml");
+        std::fs::write(path, "searxng_url = \"https://file.example.com\"").unwrap();
+        let config = Config::from_file(path).unwrap();
+        assert_eq!(
+            config.searxng_url,
+            Some("https://env.example.com".to_string())
+        );
+        std::fs::remove_file(path).ok();
+        unset_kaelo_vars();
     }
 }

@@ -15,14 +15,11 @@ fn fix_excessive_backslashes(input: &str) -> String {
         if ch == '\\' {
             if let Some(&next) = chars.peek() {
                 if !MD_SIGNIFICANT.contains(&next) && !next.is_whitespace() {
-                    // Skip the backslash, keep the next char
                     result.push(chars.next().unwrap());
                 } else {
-                    // Keep the backslash (meaningful escape or trailing backslash)
                     result.push(ch);
                 }
             } else {
-                // Trailing backslash, keep it
                 result.push(ch);
             }
         } else {
