@@ -7,6 +7,7 @@ pub mod boilerplate;
 pub mod markdown;
 pub mod quality;
 pub mod scoring;
+pub mod spa_detect;
 pub mod structural;
 pub mod token_estimator;
 
