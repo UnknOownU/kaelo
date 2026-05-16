@@ -399,10 +399,7 @@ impl KaeloServer {
                                     return Err(internal_err(format!(
                                         "All fetch strategies exhausted for {}: {}",
                                         params.url,
-                                        last_error
-                                            .as_ref()
-                                            .map(|s| s.as_str())
-                                            .unwrap_or("unknown")
+                                        last_error.as_deref().unwrap_or("unknown")
                                     )));
                                 }
                             }
@@ -415,7 +412,7 @@ impl KaeloServer {
         Err(internal_err(format!(
             "All fetch strategies exhausted for {}: {}",
             params.url,
-            last_error.as_ref().map(|s| s.as_str()).unwrap_or("unknown")
+            last_error.as_deref().unwrap_or("unknown")
         )))
     }
 
@@ -479,7 +476,7 @@ impl KaeloServer {
                             if attempts >= max_attempts {
                                 break format!(
                                     "[fetch error for {url}: all strategies exhausted: {}]",
-                                    last_error.as_ref().map(|s| s.as_str()).unwrap_or("unknown")
+                                    last_error.as_deref().unwrap_or("unknown")
                                 );
                             }
 
@@ -564,7 +561,7 @@ impl KaeloServer {
                                                 None => {
                                                     return format!(
                                                         "[fetch error for {url}: all strategies exhausted: {}]",
-                                                        last_error.as_ref().map(|s| s.as_str()).unwrap_or("unknown")
+                                                        last_error.as_deref().unwrap_or("unknown")
                                                     );
                                                 }
                                             }
@@ -803,7 +800,7 @@ impl KaeloServer {
                                         None => {
                                             output.push_str(&format!(
                                                 "Failed to fetch (all strategies exhausted): {}\n\n",
-                                                last_error.as_ref().map(|s| s.as_str()).unwrap_or("unknown")
+                                                last_error.as_deref().unwrap_or("unknown")
                                             ));
                                             fetched_ok = true;
                                             break;
@@ -818,7 +815,7 @@ impl KaeloServer {
                 if !fetched_ok {
                     output.push_str(&format!(
                         "Failed to fetch (all strategies exhausted): {}\n\n",
-                        last_error.as_ref().map(|s| s.as_str()).unwrap_or("unknown")
+                        last_error.as_deref().unwrap_or("unknown")
                     ));
                 }
             }

@@ -1,9 +1,7 @@
-/// Content quality validation for cache eligibility.
-/// Prevents caching empty/useless content like Blazor server shells.
+//! Content quality validation for cache eligibility.
+//! Prevents caching empty/useless content like Blazor server shells.
 
-/// Minimum character count for content to be considered valuable.
 const MIN_CHARS: usize = 50;
-/// Minimum non-empty line count for content to be considered valuable.
 const MIN_LINES: usize = 3;
 
 /// Assessment of content quality.

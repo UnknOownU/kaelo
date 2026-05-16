@@ -93,7 +93,7 @@ pub async fn probe_with_strategies(
                 };
                 if best
                     .as_ref()
-                    .is_none_or(|b| candidate.latency_ms < b.latency_ms)
+                    .map_or(true, |b| candidate.latency_ms < b.latency_ms)
                 {
                     best = Some(candidate);
                 }

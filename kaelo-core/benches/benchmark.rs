@@ -59,14 +59,21 @@ fn benchmark_warm_cache(c: &mut Criterion) {
 fn benchmark_sqlite_ops(c: &mut Criterion) {
     let storage = kaelo_core::storage::Storage::open(":memory:").unwrap();
     let cc = kaelo_core::storage::content_cache::ContentCache::new(&storage);
+    use kaelo_core::types::Strategy;
 
     c.bench_function("content_cache_store", |b| {
         let mut i = 0u64;
         b.iter(|| {
             let url = format!("https://example.com/page{}", i % 100);
             let content = "Lorem ipsum ".repeat(100);
-            cc.put(&url, &content, "text/html", Duration::from_secs(3600))
-                .unwrap();
+            cc.put(
+                &url,
+                &Strategy::HttpSimple,
+                &content,
+                "text/html",
+                Duration::from_secs(3600),
+            )
+            .unwrap();
             i += 1;
         })
     });
@@ -74,15 +81,21 @@ fn benchmark_sqlite_ops(c: &mut Criterion) {
     for i in 0..100 {
         let url = format!("https://example.com/page{}", i);
         let content = "Lorem ipsum ".repeat(100);
-        cc.put(&url, &content, "text/html", Duration::from_secs(3600))
-            .unwrap();
+        cc.put(
+            &url,
+            &Strategy::HttpSimple,
+            &content,
+            "text/html",
+            Duration::from_secs(3600),
+        )
+        .unwrap();
     }
 
     c.bench_function("content_cache_retrieve", |b| {
         let mut i = 0u64;
         b.iter(|| {
             let url = format!("https://example.com/page{}", i % 100);
-            cc.get(&url).ok();
+            cc.get(&url, &Strategy::HttpSimple).ok();
             i += 1;
         })
     });
