@@ -134,7 +134,11 @@ fn test_quality_validation_rejects_empty() {
     assert!(!is_content_valuable("<div id=\"app\"></div>"));
     assert!(!is_content_valuable("short"));
     assert!(is_content_valuable(
-        "This is a paragraph with enough content.\n\nSecond paragraph.\n\nThird paragraph."
+        "This is a paragraph with enough content to meet the new minimum threshold.\n\n\
+         Second paragraph with additional text to pad the character count.\n\n\
+         Third paragraph with even more content to ensure we exceed 200 characters total.\n\n\
+         Fourth paragraph to also meet the five non-empty line requirement.\n\n\
+         Fifth paragraph confirming the content is substantial enough to cache."
     ));
 }
 
