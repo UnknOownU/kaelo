@@ -209,10 +209,23 @@ fn check_content_cache(
     strategy: Option<&Strategy>,
 ) -> Option<String> {
     let cache = ContentCache::new(storage);
-    match strategy {
+    let content = match strategy {
         Some(s) => cache.get(url, s).ok().flatten().map(|c| c.content),
         None => cache.get_any(url).ok().flatten().map(|c| c.content),
+    };
+
+    // Validate cached content quality — reject poisoned/empty entries
+    if let Some(ref content) = content {
+        if !is_content_valuable(content) {
+            tracing::debug!(url, "cached content failed quality check, invalidating");
+            if let Some(s) = strategy {
+                let _ = cache.invalidate(url, Some(s));
+            }
+            return None;
+        }
     }
+
+    content
 }
 
 #[allow(clippy::too_many_arguments)]
