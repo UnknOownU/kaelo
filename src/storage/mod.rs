@@ -40,6 +40,71 @@ impl Storage {
     pub fn conn(&self) -> &rusqlite::Connection {
         &self.conn
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn store_evidence(
+        &self,
+        url: &str,
+        content_hash: &str,
+        strategy: &str,
+        retrieved_at: &str,
+        confidence: &str,
+        citations_json: Option<&str>,
+        diagnostics_json: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO fetch_evidence (url, content_hash, strategy, retrieved_at, confidence, citations_json, diagnostics_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![url, content_hash, strategy, retrieved_at, confidence, citations_json, diagnostics_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_evidence(
+        &self,
+        url: &str,
+    ) -> anyhow::Result<Option<(String, String, String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT content_hash, strategy, confidence, retrieved_at FROM fetch_evidence WHERE url = ?1 ORDER BY id DESC LIMIT 1"
+        )?;
+        let mut rows = stmt.query(rusqlite::params![url])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn store_page_history(
+        &self,
+        url: &str,
+        content_hash: &str,
+        content_body: &str,
+        strategy: &str,
+    ) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO page_history (url, content_hash, content_body, strategy) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![url, content_hash, content_body, strategy],
+        )?;
+        self.conn.execute(
+            "DELETE FROM page_history WHERE url = ?1 AND id NOT IN (SELECT id FROM page_history WHERE url = ?1 ORDER BY fetched_at DESC LIMIT 10)",
+            rusqlite::params![url],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_page_history(
+        &self,
+        url: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(String, String, String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT content_hash, content_body, strategy, fetched_at FROM page_history WHERE url = ?1 ORDER BY fetched_at DESC LIMIT ?2"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![url, limit as i64], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
 }
 
 #[cfg(test)]
