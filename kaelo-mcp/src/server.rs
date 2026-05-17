@@ -92,11 +92,12 @@ impl KaeloServer {
     }
 
     fn build_response(&self, text: String, meta: &str) -> CallToolResult {
-        let mut contents = Vec::new();
-        if !meta.is_empty() {
-            contents.push(Content::text(format!("⚙ Kaelo: {meta}")));
-        }
-        contents.push(Content::text(text));
+        let full_text = if !meta.is_empty() {
+            format!("⚙ Kaelo: {meta}\n\n{text}")
+        } else {
+            text
+        };
+        let mut contents = vec![Content::text(full_text)];
         if let Some(notice) = self.get_update_notice() {
             contents.push(Content::text(notice));
         }
@@ -302,7 +303,7 @@ fn parse_strategy_name(name: &str) -> Result<Strategy> {
 impl KaeloServer {
     #[tool(
         name = "web_fetch",
-        description = "Fetch a URL and return clean Markdown content"
+        description = "Fetch a URL and return clean Markdown content. IMPORTANT: always report the first line of the response (⚙ Kaelo: ...) to the user — it shows how the content was obtained (strategy used, latency, or cached)."
     )]
     async fn web_fetch(
         &self,
