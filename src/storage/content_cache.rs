@@ -17,6 +17,7 @@ fn strategy_key(strategy: &Strategy) -> &'static str {
         Strategy::TlsMobile => "TlsMobile",
         Strategy::Headless => "Headless",
         Strategy::PublicApi => "PublicApi",
+        Strategy::YouTube => "YouTube",
     }
 }
 
@@ -45,6 +46,24 @@ pub struct CacheStats {
     pub entry_count: u64,
     pub total_size_bytes: u64,
     pub top_domains: Vec<(String, u64)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DetailedCacheStats {
+    pub entry_count: u64,
+    pub total_size_bytes: u64,
+    pub top_domains: Vec<(String, u64)>,
+    pub oldest_at: Option<String>,
+    pub newest_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CacheSearchEntry {
+    pub url: String,
+    pub strategy: String,
+    pub content_type: String,
+    pub original_size: usize,
+    pub created_at: String,
 }
 
 fn gzip_compress(data: &[u8]) -> Result<Vec<u8>> {
@@ -455,6 +474,111 @@ impl<'a> ContentCache<'a> {
             total_size_bytes,
             top_domains,
         })
+    }
+
+    /// Returns detailed stats including oldest/newest timestamps and top 10 domains.
+    pub fn detailed_stats(&self) -> Result<DetailedCacheStats> {
+        let conn = self.storage.conn();
+
+        let entry_count: u64 = conn
+            .query_row("SELECT COUNT(*) FROM url_cache", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map(|c| c as u64)?;
+
+        let total_size_bytes: u64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(LENGTH(compressed_content)), 0) FROM url_cache",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|s| s as u64)?;
+
+        let oldest_at: Option<String> = conn
+            .query_row("SELECT MIN(created_at) FROM url_cache", [], |row| {
+                row.get::<_, Option<String>>(0)
+            })
+            .ok()
+            .flatten();
+
+        let newest_at: Option<String> = conn
+            .query_row("SELECT MAX(created_at) FROM url_cache", [], |row| {
+                row.get::<_, Option<String>>(0)
+            })
+            .ok()
+            .flatten();
+
+        let mut stmt = conn.prepare("SELECT url FROM url_cache")?;
+        let urls: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut domain_counts: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
+        for url in &urls {
+            if let Some(domain) = extract_domain(url) {
+                *domain_counts.entry(domain).or_insert(0) += 1;
+            }
+        }
+
+        let mut top_domains: Vec<(String, u64)> = domain_counts.into_iter().collect();
+        top_domains.sort_by_key(|b| std::cmp::Reverse(b.1));
+        top_domains.truncate(10);
+
+        Ok(DetailedCacheStats {
+            entry_count,
+            total_size_bytes,
+            top_domains,
+            oldest_at,
+            newest_at,
+        })
+    }
+
+    /// Search cache entries by URL pattern (LIKE query).
+    pub fn search_entries(&self, query: &str, limit: u32) -> Result<Vec<CacheSearchEntry>> {
+        let conn = self.storage.conn();
+        let pattern = format!("%{query}%");
+
+        let mut stmt = conn.prepare(
+            "SELECT url, strategy, content_type, original_size, created_at
+             FROM url_cache
+             WHERE url LIKE ?1
+             ORDER BY created_at DESC
+             LIMIT ?2",
+        )?;
+
+        let entries: Vec<CacheSearchEntry> = stmt
+            .query_map(rusqlite::params![pattern, limit as i64], |row| {
+                Ok(CacheSearchEntry {
+                    url: row.get(0)?,
+                    strategy: row.get(1)?,
+                    content_type: row.get(2)?,
+                    original_size: row.get::<_, i64>(3)? as usize,
+                    created_at: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(entries)
+    }
+
+    /// Delete cache entries matching a domain. Returns count deleted.
+    pub fn delete_by_domain(&self, domain: &str) -> Result<u64> {
+        self.clear_domain(domain)
+    }
+
+    /// Delete cache entries matching an exact URL. Returns count deleted.
+    pub fn delete_by_url(&self, url: &str) -> Result<u64> {
+        let count = self
+            .storage
+            .conn()
+            .execute(
+                "DELETE FROM url_cache WHERE url = ?1",
+                rusqlite::params![url],
+            )
+            .context("failed to delete by url")?;
+        Ok(count as u64)
     }
 
     pub fn content_hash(&self, url: &str, strategy: &Strategy) -> Result<Option<String>> {
@@ -994,6 +1118,169 @@ mod tests {
 
         let hash = sha256_hex(shared.as_bytes());
         let remaining = cache.find_by_hash(&hash).unwrap();
+        assert_eq!(remaining.len(), 1);
+    }
+
+    #[test]
+    fn test_search_entries() {
+        let cache = make_cache();
+
+        cache
+            .put(
+                "https://example.com/page1",
+                &TEST_STRATEGY,
+                "content1",
+                "text/html",
+                Duration::from_secs(3600),
+            )
+            .unwrap();
+        cache
+            .put(
+                "https://example.com/page2",
+                &TEST_STRATEGY,
+                "content2",
+                "text/html",
+                Duration::from_secs(3600),
+            )
+            .unwrap();
+        cache
+            .put(
+                "https://other.org/index",
+                &TEST_STRATEGY,
+                "content3",
+                "text/plain",
+                Duration::from_secs(3600),
+            )
+            .unwrap();
+
+        let results = cache.search_entries("example.com", 10).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.url.contains("example.com")));
+
+        let limited = cache.search_entries("example.com", 1).unwrap();
+        assert_eq!(limited.len(), 1);
+
+        let none = cache.search_entries("nonexistent", 10).unwrap();
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn test_detailed_stats() {
+        let cache = make_cache();
+
+        let empty_stats = cache.detailed_stats().unwrap();
+        assert_eq!(empty_stats.entry_count, 0);
+        assert!(empty_stats.oldest_at.is_none());
+        assert!(empty_stats.newest_at.is_none());
+
+        cache
+            .put(
+                "https://a.com/1",
+                &TEST_STRATEGY,
+                "content1",
+                "text/html",
+                Duration::from_secs(3600),
+            )
+            .unwrap();
+        cache
+            .put(
+                "https://a.com/2",
+                &TEST_STRATEGY,
+                "content2",
+                "text/html",
+                Duration::from_secs(3600),
+            )
+            .unwrap();
+        cache
+            .put(
+                "https://b.com/1",
+                &TEST_STRATEGY,
+                "content3",
+                "text/html",
+                Duration::from_secs(3600),
+            )
+            .unwrap();
+
+        let stats = cache.detailed_stats().unwrap();
+        assert_eq!(stats.entry_count, 3);
+        assert!(stats.total_size_bytes > 0);
+        assert!(stats.oldest_at.is_some());
+        assert!(stats.newest_at.is_some());
+        assert!(!stats.top_domains.is_empty());
+        assert_eq!(stats.top_domains[0].0, "a.com");
+        assert_eq!(stats.top_domains[0].1, 2);
+    }
+
+    #[test]
+    fn test_delete_by_url() {
+        let cache = make_cache();
+
+        cache
+            .put(
+                "https://example.com/page1",
+                &TEST_STRATEGY,
+                "content1",
+                "text/html",
+                Duration::from_secs(3600),
+            )
+            .unwrap();
+        cache
+            .put(
+                "https://example.com/page2",
+                &TEST_STRATEGY,
+                "content2",
+                "text/html",
+                Duration::from_secs(3600),
+            )
+            .unwrap();
+
+        let count = cache.delete_by_url("https://example.com/page1").unwrap();
+        assert_eq!(count, 1);
+
+        let remaining = cache.search_entries("example.com", 10).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].url, "https://example.com/page2");
+
+        let no_match = cache.delete_by_url("https://nonexistent.com").unwrap();
+        assert_eq!(no_match, 0);
+    }
+
+    #[test]
+    fn test_delete_by_domain() {
+        let cache = make_cache();
+
+        cache
+            .put(
+                "https://example.com/page1",
+                &TEST_STRATEGY,
+                "content1",
+                "text/html",
+                Duration::from_secs(3600),
+            )
+            .unwrap();
+        cache
+            .put(
+                "https://example.com/page2",
+                &TEST_STRATEGY,
+                "content2",
+                "text/html",
+                Duration::from_secs(3600),
+            )
+            .unwrap();
+        cache
+            .put(
+                "https://other.org/page1",
+                &TEST_STRATEGY,
+                "content3",
+                "text/html",
+                Duration::from_secs(3600),
+            )
+            .unwrap();
+
+        let count = cache.delete_by_domain("example.com").unwrap();
+        assert_eq!(count, 2);
+
+        let remaining = cache.search_entries("other.org", 10).unwrap();
         assert_eq!(remaining.len(), 1);
     }
 }
