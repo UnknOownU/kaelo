@@ -119,7 +119,7 @@ pub async fn probe_and_cache(
 ) -> Option<Strategy> {
     let strategies: Vec<Strategy> = fallback_order()
         .into_iter()
-        .filter(|s| !matches!(s, Strategy::PublicApi))
+        .filter(|s| !matches!(s, Strategy::PublicApi | Strategy::YouTube))
         .collect();
 
     let result = probe_with_strategies(prober, domain, &strategies).await;

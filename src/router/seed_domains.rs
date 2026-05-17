@@ -247,22 +247,22 @@ pub const SEED_DOMAINS: &[SeedDomain] = &[
     },
     SeedDomain {
         domain: "youtube.com",
-        strategy: "PublicApi",
-        notes: "noembed metadata API",
+        strategy: "YouTube",
+        notes: "YouTube transcript backend (yt-dlp)",
     },
     SeedDomain {
         domain: "www.youtube.com",
-        strategy: "PublicApi",
+        strategy: "YouTube",
         notes: "YouTube www subdomain",
     },
     SeedDomain {
         domain: "youtu.be",
-        strategy: "PublicApi",
+        strategy: "YouTube",
         notes: "YouTube short URL",
     },
     SeedDomain {
         domain: "m.youtube.com",
-        strategy: "PublicApi",
+        strategy: "YouTube",
         notes: "YouTube mobile URL",
     },
     SeedDomain {
@@ -335,6 +335,7 @@ mod tests {
             "TlsMobile",
             "Headless",
             "PublicApi",
+            "YouTube",
         ];
         for d in SEED_DOMAINS {
             assert!(

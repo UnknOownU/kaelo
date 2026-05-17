@@ -154,6 +154,7 @@ fn parse_strategy(name: &str) -> Result<Strategy> {
         "TlsMobile" => Ok(Strategy::TlsMobile),
         "Headless" => Ok(Strategy::Headless),
         "PublicApi" => Ok(Strategy::PublicApi),
+        "YouTube" => Ok(Strategy::YouTube),
         other => Err(anyhow::anyhow!("unknown strategy: {}", other)),
     }
 }
