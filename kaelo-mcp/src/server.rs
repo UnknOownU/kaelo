@@ -447,7 +447,11 @@ impl KaeloServer {
                             let mut result = apply_token_budget(markdown, params.token_budget);
                             let meta = format!(
                                 "unable to render JS — tried: {}, none returned usable content",
-                                visited.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", ")
+                                visited
+                                    .iter()
+                                    .map(|s| format!("{s:?}"))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
                             );
                             result.push_str(&format!("\n\n[Kaelo: {meta}]"));
                             return Ok(self.build_response(result, ""));
