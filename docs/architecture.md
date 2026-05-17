@@ -2,37 +2,27 @@
 
 Kaelo is a Rust MCP server that fetches web content for AI agents. It picks the right fetch strategy per domain, caches what works, and returns clean Markdown within token budgets.
 
-## Workspace Structure
+## Crate Structure
 
-Four crates, each with a clear job:
-
-```
-kaelo/
-├── kaelo-core/        # Routing, caching, extraction, search, config
-├── kaelo-fetch/       # Fetch backends (HTTP, TLS, headless, public APIs)
-├── kaelo-mcp/         # MCP server with tool definitions
-└── kaelo-cli/         # CLI entrypoint
-```
-
-**kaelo-core** is the brain. It owns the router, both caches (route and content), the extraction pipeline, search backends, and configuration. It defines the shared types (`FetchRequest`, `FetchResponse`, `Strategy`, `FetchError`) that every other crate depends on.
-
-**kaelo-fetch** is the muscle. It implements the `FetchBackend` trait with concrete backends: plain HTTP, TLS impersonation, headless browser, and public API clients. Feature-gated so you only compile what you need.
-
-**kaelo-mcp** is the interface. It wraps core and fetch into MCP tool definitions (`web_fetch`, `web_search`, `fetch_urls`, `ping`) and handles the stdio transport layer.
-
-**kaelo-cli** is the launcher. Parses args, opens the SQLite database, starts the MCP server.
-
-### Crate dependency graph
+A single crate with a modular layout:
 
 ```
-kaelo-mcp ──▶ kaelo-core
-kaelo-mcp ──▶ kaelo-fetch
-kaelo-fetch ──▶ kaelo-core
-
-kaelo-cli ──▶ kaelo-mcp
+src/
+├── main.rs              # CLI entrypoint (clap)
+├── lib.rs               # Module declarations
+├── config.rs            # Configuration (env vars, TOML, defaults)
+├── types.rs             # Shared types (FetchRequest, FetchResponse, Strategy, FetchError)
+├── error.rs             # Error types
+├── update.rs            # Self-update from GitHub releases
+├── extraction/          # Content extraction pipeline
+├── fetch/               # FetchBackend trait + backends
+├── mcp/                 # MCP server with tool definitions
+├── router/              # Strategy selection and fallback chain
+├── search/              # Web search backends
+└── storage/             # SQLite (route cache, content cache, migrations)
 ```
 
-Note: `kaelo-core` has zero workspace dependencies. Everything flows downward.
+The modules form a clean dependency chain: `main` → `mcp` → `fetch` → `core modules` (storage, extraction, router, etc.).
 
 ## Request Flow
 
@@ -44,7 +34,7 @@ Agent (Claude, OpenCode, Cursor, etc.)
   │ JSON-RPC over stdio
   ▼
 ┌──────────────────────────────────────────────────────────┐
-│  KaeloServer (kaelo-mcp)                                 │
+│  KaeloServer (mcp module)                                 │
 │                                                          │
 │  1. Lock Storage                                         │
 │  2. Check content cache (url_cache table)                │
@@ -67,7 +57,7 @@ The `fetch_urls` tool runs the same pipeline per URL, but spawns each as a tokio
 
 ## Router and Strategy Resolution
 
-The router decides *how* to fetch a given URL. It lives in `kaelo-core/src/router/`.
+The router decides *how* to fetch a given URL. It lives in `src/router/`.
 
 ### Decision types
 
@@ -158,7 +148,7 @@ The `clear_domain` method removes all strategies for a domain. Useful when a sit
 
 ## Fetch Backends
 
-All backends implement the `FetchBackend` trait from `kaelo-fetch`:
+All backends implement the `FetchBackend` trait from `src/fetch/`:
 
 ```rust
 trait FetchBackend {
@@ -216,7 +206,7 @@ Returns JSON that the extraction pipeline pretty-prints as Markdown. Much faster
 
 ## Content Extraction
 
-The extraction pipeline converts raw HTTP responses into clean Markdown. It lives in `kaelo-core/src/extraction/`.
+The extraction pipeline converts raw HTTP responses into clean Markdown. It lives in `src/extraction/`.
 
 ### Pipeline stages
 

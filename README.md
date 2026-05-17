@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.76%2B-orange.svg)](https://www.rust-lang.org/)
 [![MCP](https://img.shields.io/badge/MCP-2024--11--05-purple.svg)](https://modelcontextprotocol.io/)
-[![Version](https://img.shields.io/badge/version-0.3.0-green.svg)](https://github.com/HachemiH/kaelo/releases)
+[![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](https://github.com/HachemiH/kaelo/releases)
 
 **[Installation](#quick-start)** · **[Configuration](#configuration)** · **[Architecture](#how-it-works)** · **[MCP Tools](#mcp-tools)** · **[Contributing](#contributing)**
 
@@ -211,10 +211,13 @@ Environment variables override config file values:
 ```
 KAELO_CACHE_ENABLED=true          # Master cache switch
 KAELO_CACHE_MAX_SIZE=52428800     # 50 MB hard limit
+KAELO_CACHE_MAX_ENTRY=102400      # 100 KB max per cached entry
 KAELO_CACHE_TTL=3600              # 1 hour default TTL
 KAELO_CACHE_COMPRESSION=gzip      # Compress cached content
+KAELO_DB_PATH=~/.config/kaelo/kaelo.db  # SQLite database path
 KAELO_SEARXNG_URL=http://...      # SearXNG instance URL
 KAELO_SEARCH_BACKEND=searxng      # "duckduckgo" (default) or "searxng"
+KAELO_DEFAULT_STRATEGY=HttpSimple # Override auto-detection for all requests
 KAELO_LOG_LEVEL=debug             # log level
 ```
 
@@ -253,12 +256,14 @@ kaelo cache forget-auth <domain> # Remove stored auth for a domain
 
 ## Architecture
 
-Kaelo is structured as a Rust workspace with four crates:
+Kaelo is a single Rust crate with a modular structure:
 
-- **`kaelo-core`** — routing, caching (SQLite), search backends, content extraction, config
-- **`kaelo-fetch`** — fetch backends (HTTP, TLS impersonation, headless browser, public APIs)
-- **`kaelo-mcp`** — MCP server with tool definitions and stdio transport
-- **`kaelo-cli`** — CLI interface using clap
+- **`extraction/`** — content extraction pipeline (Markdown conversion, boilerplate removal, SPA detection, quality gate)
+- **`fetch/`** — multi-strategy backends (HTTP, TLS impersonation, headless browser, public APIs)
+- **`mcp/`** — MCP server with tool definitions and stdio transport
+- **`router/`** — strategy selection, fallback chain, route probing
+- **`search/`** — web search backends (DuckDuckGo, SearXNG)
+- **`storage/`** — SQLite storage (route cache, content cache, migrations)
 
 ### Documentation
 

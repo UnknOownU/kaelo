@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-05-17
+
+### Changed
+- **Breaking**: Merged the 4-crate workspace into a single `kaelo` crate for simpler installation and publishing
+- `cargo install kaelo` now works directly (previously required cloning the repo)
+- Removed workspace structure (`kaelo-core`, `kaelo-fetch`, `kaelo-mcp`, `kaelo-cli` → single crate with modules)
+
+### Note
+This is the first stable release. The v0.x line established the core features (multi-strategy fetching, SPA detection, route cache, MCP server). v1.0.0 consolidates everything into a clean, publishable package.
+
+## [0.4.2] - 2026-05-17
+
+### Added
+- Response metadata in MCP output: strategy name, timing, cache status prepended as `⚙ Kaelo:` line in content
+- `_meta` field in MCP tool responses with structured strategy and timing information
+
+### Fixed
+- Corrected quality gate if/else structure for cached content validation
+- `cargo fmt` pass
+
+## [0.4.1] - 2026-05-17
+
+### Added
+- Startup update notice: appends a non-blocking message to MCP responses when a newer version is available on GitHub
+
+### Fixed
+- Cached content quality validation: stale or empty cached entries are now invalidated and re-fetched
+- Headless wait time increased for Blazor and other heavy SPA frameworks
+- Log file opened in append mode (`File::create` → `OpenOptions::append`) to preserve logs across restarts
+
+## [0.4.0] - 2026-05-17
+
+### Added
+- SPA-aware fetch pipeline: detects JavaScript-heavy sites and fast-paths to the Headless backend
+- SPA fingerprint detection module: recognizes Blazor Server, Next.js, Vue, Angular, React, Svelte, Nuxt, Remix, Astro, and generic SPA indicators
+- Quality gate overhaul with SPA-aware heuristics: minimum 200 chars, 5 non-empty lines, HTML artifact rejection
+
+### Changed
+- Fallback chain now routes SPA-detected domains directly to Headless, skipping HTTP/TLS probing
+- Content quality validation applies to both fresh and cached responses
+
 ## [0.3.0] - 2026-05-16
 
 ### Added
@@ -50,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI interface with clap
 
 ### Technical
-- Rust workspace with 4 crates (kaelo-core, kaelo-fetch, kaelo-mcp, kaelo-cli)
+- Rust workspace with 4 crates (kaelo-core, kaelo-fetch, kaelo-mcp, kaelo)
 - 252 tests
 - CI/CD via GitHub Actions
 - Homebrew formula and install.sh installer

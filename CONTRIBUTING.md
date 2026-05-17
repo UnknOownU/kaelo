@@ -11,23 +11,31 @@ cargo test --all
 
 ## Project Structure
 
-| Crate | Description |
-|---|---|
-| `kaelo-core` | Storage (SQLite), Config, Router, Extraction pipeline |
-| `kaelo-fetch` | FetchBackend trait + 3 backends (HTTP, TLS impersonation, Headless) |
-| `kaelo-mcp` | MCP server using rmcp (stdio transport) |
-| `kaelo-cli` | CLI binary using clap |
+```
+src/
+  main.rs              CLI entrypoint (clap)
+  lib.rs               Module declarations and re-exports
+  config.rs            Configuration (env vars, TOML, defaults)
+  types.rs             Shared types (FetchRequest, FetchResponse, Strategy, FetchError)
+  error.rs             Error types
+  update.rs            Self-update from GitHub releases
+  extraction/          Content extraction pipeline (Markdown, boilerplate removal, SPA detection)
+  fetch/               FetchBackend trait + backends (HTTP, TLS impersonation, headless, public API)
+  mcp/                 MCP server (rmcp, stdio transport, tool definitions)
+  router/              Strategy selection and fallback chain
+  search/              Web search backends (DuckDuckGo, SearXNG)
+  storage/             SQLite storage (route cache, content cache, migrations)
+```
 
 ## Development Commands
 
 ```bash
-cargo build                    # Build all crates
-cargo test --all               # Run all tests
-cargo test -p kaelo-core       # Run kaelo-core tests only
+cargo build                                           # Build
+cargo test                                            # Run all tests
 cargo clippy --all-targets --all-features -- -D warnings  # Lint
-cargo fmt --check              # Check formatting
-cargo fmt                      # Auto-format
-cargo bench -p kaelo-core      # Run benchmarks
+cargo fmt --check                                     # Check formatting
+cargo fmt                                             # Auto-format
+cargo bench                                           # Run benchmarks
 ```
 
 ## Pull Request Process
