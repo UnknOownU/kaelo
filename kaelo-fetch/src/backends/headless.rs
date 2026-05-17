@@ -12,19 +12,26 @@ static POOL: OnceLock<BrowserPool> = OnceLock::new();
 const WAIT_FOR_CONTENT_JS: &str = r#"(function() {
   var body = document.body;
   if (!body) return Promise.resolve(false);
-  if (body.innerText.trim().length > 100 && body.children.length > 1) return Promise.resolve(true);
+  // Check for substantial content — 500+ chars to avoid false positives from nav/header
+  function hasContent() {
+    return body.innerText.trim().length > 500 && body.querySelectorAll('p, article, main, [role="main"]').length > 0;
+  }
+  if (hasContent()) return Promise.resolve(true);
   return new Promise(function(resolve) {
     var timeout = setTimeout(function() { resolve(false); }, 15000);
+    // Minimum wait: even if content appears fast, wait 2s for late-loading elements
+    var minWait = setTimeout(function() {}, 2000);
     var debounce = null;
     var observer = new MutationObserver(function() {
       clearTimeout(debounce);
       debounce = setTimeout(function() {
-        if (body.innerText.trim().length > 100 && body.children.length > 1) {
+        if (hasContent()) {
           clearTimeout(timeout);
           observer.disconnect();
-          resolve(true);
+          // Ensure minimum wait for lazy-loaded content
+          setTimeout(function() { resolve(true); }, 1000);
         }
-      }, 500);
+      }, 800);
     });
     observer.observe(body, { childList: true, subtree: true });
   });

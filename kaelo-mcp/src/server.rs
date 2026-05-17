@@ -91,8 +91,11 @@ impl KaeloServer {
             .and_then(|g| g.clone())
     }
 
-    fn success_with_notice(&self, text: String) -> CallToolResult {
+    fn build_response(&self, text: String, meta: &str) -> CallToolResult {
         let mut text = text;
+        if !meta.is_empty() {
+            text.push_str(&format!("\n\n[Kaelo: {meta}]"));
+        }
         if let Some(notice) = self.get_update_notice() {
             text.push_str(&notice);
         }
@@ -324,7 +327,7 @@ impl KaeloServer {
             {
                 tracing::info!(url = %params.url, "Cache hit");
                 let result = apply_token_budget(content, params.token_budget);
-                return Ok(self.success_with_notice(result));
+                return Ok(self.build_response(result, "cached"));
             }
         }
 
@@ -404,8 +407,8 @@ impl KaeloServer {
                             );
                         }
                         let result = apply_token_budget(markdown, params.token_budget);
-                        return Ok(self.success_with_notice(result));
-                    } else {
+                        let meta = format!("{:?}, {}ms", current_strategy, latency_ms);
+                        return Ok(self.build_response(result, &meta));
                         tracing::warn!(
                             url = %params.url,
                             strategy = ?current_strategy,
@@ -441,12 +444,12 @@ impl KaeloServer {
                             }
                             None => {
                                 let mut result = apply_token_budget(markdown, params.token_budget);
-                                let warning = format!(
-                                    "\n\n[Kaelo: unable to render JavaScript content for this URL. Tried: {} — none returned usable content.]",
+                                let meta = format!(
+                                    "unable to render JS — tried: {}, none returned usable content",
                                     visited.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", ")
                                 );
-                                result.push_str(&warning);
-                                return Ok(self.success_with_notice(result));
+                                result.push_str(&format!("\n\n[Kaelo: {meta}]"));
+                                return Ok(self.build_response(result, ""));
                             }
                         }
                     }
@@ -521,6 +524,7 @@ impl KaeloServer {
 
         tracing::info!(urls = ?params.urls, "Batch fetching {} URLs", params.urls.len());
 
+        let url_count = params.urls.len();
         let state = self.state.clone();
         let strategy_name = params.strategy;
         let token_budget = params.token_budget;
@@ -706,7 +710,7 @@ impl KaeloServer {
             }
         }
 
-        Ok(self.success_with_notice(combined))
+        Ok(self.build_response(combined, &format!("{} URLs fetched", url_count)))
     }
 
     #[tool(name = "ping", description = "Health check — returns pong")]
