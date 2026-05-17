@@ -92,10 +92,11 @@ impl KaeloServer {
     }
 
     fn build_response(&self, text: String, meta: &str) -> CallToolResult {
-        let mut contents = vec![Content::text(text)];
+        let mut contents = Vec::new();
         if !meta.is_empty() {
-            contents.push(Content::text(format!("[Kaelo: {meta}]")));
+            contents.push(Content::text(format!("⚙ Kaelo: {meta}")));
         }
+        contents.push(Content::text(text));
         if let Some(notice) = self.get_update_notice() {
             contents.push(Content::text(notice));
         }
