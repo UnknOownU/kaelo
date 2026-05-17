@@ -1,5 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use crate::block_detect::{self, DetectedBlock};
 use crate::types::{FetchError, Strategy};
 
 /// Classification of fetch errors for fallback decisions.
@@ -13,6 +14,8 @@ pub enum ErrorClass {
     NotFound,
     /// Rate limited — back off, don't retry immediately.
     RateLimited,
+    /// Anti-bot block detected (Cloudflare, PerimeterX, etc.).
+    Blocked(crate::types::BlockType),
 }
 
 /// Classify a [`FetchError`] into an [`ErrorClass`] for fallback logic.
@@ -29,6 +32,28 @@ pub fn classify_error(error: &FetchError) -> ErrorClass {
     }
 }
 
+/// Classify a response using full body + headers via block_detect.
+///
+/// This provides richer classification than [`classify_error`] by inspecting
+/// response content to identify specific blockers (Cloudflare, PerimeterX, etc.).
+/// Returns `None` if no block is detected.
+pub fn classify_response_block(
+    status: u16,
+    body: &str,
+    headers: &HashMap<String, String>,
+) -> Option<ErrorClass> {
+    let detected = block_detect::classify_response(status, body, headers)?;
+    Some(match detected {
+        DetectedBlock::RateLimit => ErrorClass::RateLimited,
+        DetectedBlock::AuthWall => ErrorClass::NotFound,
+        other => {
+            let block_type = other.to_block_type();
+            tracing::info!(block_type = ?block_type, status, "Anti-bot block detected during fallback");
+            ErrorClass::Blocked(block_type)
+        }
+    })
+}
+
 /// Strategy priority order for fallback.
 pub fn fallback_order() -> Vec<Strategy> {
     vec![
@@ -37,6 +62,7 @@ pub fn fallback_order() -> Vec<Strategy> {
         Strategy::TlsMobile,
         Strategy::Headless,
         Strategy::PublicApi,
+        Strategy::YouTube,
     ]
 }
 
@@ -210,6 +236,7 @@ mod tests {
         visited.insert(Strategy::TlsMobile);
         visited.insert(Strategy::Headless);
         visited.insert(Strategy::PublicApi);
+        visited.insert(Strategy::YouTube);
 
         let result = next_strategy(&Strategy::HttpSimple, &visited, 5, 1, &FetchError::Timeout);
         assert_eq!(result, None);
@@ -284,5 +311,156 @@ mod tests {
 
         let next = chain.next(&Strategy::HttpSimple, &FetchError::HttpError(404));
         assert_eq!(next, None);
+    }
+
+    fn make_headers(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn test_classify_response_block_cloudflare() {
+        let headers = make_headers(&[("cf-ray", "abc123")]);
+        let result = classify_response_block(403, "Access denied", &headers);
+        assert_eq!(
+            result,
+            Some(ErrorClass::Blocked(crate::types::BlockType::Cloudflare))
+        );
+    }
+
+    #[test]
+    fn test_classify_response_block_perimeterx() {
+        let headers = make_headers(&[]);
+        let result = classify_response_block(403, "window._pxCaptcha = '...'", &headers);
+        assert_eq!(
+            result,
+            Some(ErrorClass::Blocked(crate::types::BlockType::PerimeterX))
+        );
+    }
+
+    #[test]
+    fn test_classify_response_block_datadome() {
+        let headers = make_headers(&[("set-cookie", "datadome=abc")]);
+        let result = classify_response_block(403, "blocked", &headers);
+        assert_eq!(
+            result,
+            Some(ErrorClass::Blocked(crate::types::BlockType::DataDome))
+        );
+    }
+
+    #[test]
+    fn test_classify_response_block_akamai() {
+        let headers = make_headers(&[("x-akamai-transformed", "1")]);
+        let result = classify_response_block(403, "access denied", &headers);
+        assert_eq!(
+            result,
+            Some(ErrorClass::Blocked(crate::types::BlockType::Akamai))
+        );
+    }
+
+    #[test]
+    fn test_classify_response_block_captcha() {
+        let headers = make_headers(&[]);
+        let result = classify_response_block(403, "please complete the recaptcha", &headers);
+        assert_eq!(
+            result,
+            Some(ErrorClass::Blocked(crate::types::BlockType::Captcha))
+        );
+    }
+
+    #[test]
+    fn test_classify_response_block_unknown_403() {
+        let headers = make_headers(&[]);
+        let result = classify_response_block(403, "generic access denied", &headers);
+        assert_eq!(
+            result,
+            Some(ErrorClass::Blocked(crate::types::BlockType::Unknown))
+        );
+    }
+
+    #[test]
+    fn test_classify_response_block_rate_limit() {
+        let headers = make_headers(&[]);
+        let result = classify_response_block(429, "slow down", &headers);
+        assert_eq!(result, Some(ErrorClass::RateLimited));
+    }
+
+    #[test]
+    fn test_classify_response_block_auth_wall() {
+        let headers = make_headers(&[]);
+        let result = classify_response_block(401, "login required", &headers);
+        assert_eq!(result, Some(ErrorClass::NotFound));
+    }
+
+    #[test]
+    fn test_classify_response_block_paywall() {
+        let headers = make_headers(&[]);
+        let result = classify_response_block(
+            200,
+            "subscribe to continue reading this premium content",
+            &headers,
+        );
+        assert_eq!(
+            result,
+            Some(ErrorClass::Blocked(crate::types::BlockType::Paywall))
+        );
+    }
+
+    #[test]
+    fn test_classify_response_block_no_block() {
+        let headers = make_headers(&[]);
+        let result = classify_response_block(200, "normal page content", &headers);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_classify_response_block_500_no_block() {
+        let headers = make_headers(&[]);
+        let result = classify_response_block(500, "internal server error", &headers);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_classify_error_unchanged() {
+        assert_eq!(
+            classify_error(&FetchError::HttpError(403)),
+            ErrorClass::Blocking
+        );
+        assert_eq!(
+            classify_error(&FetchError::HttpError(503)),
+            ErrorClass::Blocking
+        );
+        assert_eq!(
+            classify_error(&FetchError::HttpError(404)),
+            ErrorClass::NotFound
+        );
+        assert_eq!(
+            classify_error(&FetchError::HttpError(429)),
+            ErrorClass::RateLimited
+        );
+        assert_eq!(classify_error(&FetchError::Timeout), ErrorClass::Transient);
+    }
+
+    #[test]
+    fn test_next_strategy_allows_retry_on_blocking() {
+        let visited = HashSet::new();
+        let result = next_strategy(
+            &Strategy::HttpSimple,
+            &visited,
+            5,
+            1,
+            &FetchError::HttpError(403),
+        );
+        assert_eq!(result, Some(Strategy::TlsChrome));
+    }
+
+    #[test]
+    fn test_fallback_chain_retries_on_block() {
+        let mut chain = FallbackChain::new(5);
+        chain.record_attempt(&Strategy::HttpSimple);
+        let next = chain.next(&Strategy::HttpSimple, &FetchError::HttpError(403));
+        assert_eq!(next, Some(Strategy::TlsChrome));
     }
 }
