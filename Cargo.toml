@@ -30,12 +30,19 @@ flate2 = "1"
 sha2 = "0.10"
 dom_smoothie = "0.17"
 clap = { version = "4", features = ["derive"] }
-rmcp = { version = "=1.7.0", features = ["server", "macros", "transport-io"] }
+rmcp = { version = "=1.7.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars = "1"
 wreq = { version = "=6.0.0-rc.28", optional = true }
 wreq-util = { version = "3.0.0-rc.10", optional = true }
 chromiumoxide = { version = "0.9", optional = true }
 futures = { version = "0.3", optional = true }
+url = "2"
+hyper = { version = "1", features = ["server"] }
+hyper-util = "0.1"
+http-body-util = "0.1"
+bytes = "1"
+tower-service = "0.3"
+tokio-util = "0.7"
 
 [dev-dependencies]
 criterion = "0.5"

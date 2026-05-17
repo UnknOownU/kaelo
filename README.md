@@ -125,6 +125,19 @@ Kaelo runs as an MCP server over stdio. Add it to your agent's config and it aut
 }
 ```
 
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `~/.config/Claude/claude_desktop_config.json` on Linux):
+
+```jsonc
+{
+  "mcpServers": {
+    "kaelo": {
+      "command": "kaelo",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
 **Claude Code** (`.claude/settings.json`):
 
 ```jsonc
@@ -137,7 +150,7 @@ Kaelo runs as an MCP server over stdio. Add it to your agent's config and it aut
 }
 ```
 
-**Cursor** (`.cursor/mcp.json`):
+**Cursor** (`~/.cursor/mcp.json`):
 
 ```jsonc
 {
@@ -149,6 +162,36 @@ Kaelo runs as an MCP server over stdio. Add it to your agent's config and it aut
   }
 }
 ```
+
+**Windsurf** (`~/.windsurf/mcp.json`):
+
+```jsonc
+{
+  "mcpServers": {
+    "kaelo": {
+      "command": "kaelo",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+**Zed** (`~/.config/zed/settings.json` — add inside the `mcp` section):
+
+```jsonc
+{
+  "mcp": {
+    "servers": {
+      "kaelo": {
+        "command": "kaelo",
+        "args": ["serve"]
+      }
+    }
+  }
+}
+```
+
+Run `kaelo setup` to auto-detect which clients are installed on your system.
 
 ## MCP Tools
 
