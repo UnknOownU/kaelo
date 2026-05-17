@@ -409,48 +409,48 @@ impl KaeloServer {
                         let result = apply_token_budget(markdown, params.token_budget);
                         let meta = format!("{:?}, {}ms", current_strategy, latency_ms);
                         return Ok(self.build_response(result, &meta));
-                        tracing::warn!(
-                            url = %params.url,
-                            strategy = ?current_strategy,
-                            "Content not valuable enough to cache, trying next strategy"
-                        );
+                    }
+                    tracing::warn!(
+                        url = %params.url,
+                        strategy = ?current_strategy,
+                        "Content not valuable enough to cache, trying next strategy"
+                    );
 
-                        if is_spa && !visited.contains(&Strategy::Headless) {
-                            tracing::info!(
+                    if is_spa && !visited.contains(&Strategy::Headless) {
+                        tracing::info!(
+                            url = %params.url,
+                            spa = ?spa_detect::detect_spa(&html),
+                            "SPA detected, skipping to Headless"
+                        );
+                        current_strategy = Strategy::Headless;
+                        continue;
+                    }
+
+                    match next_strategy(
+                        &current_strategy,
+                        &visited,
+                        max_attempts,
+                        attempts,
+                        &FetchError::NetworkError("low quality content".into()),
+                    ) {
+                        Some(next) => {
+                            tracing::warn!(
                                 url = %params.url,
-                                spa = ?spa_detect::detect_spa(&html),
-                                "SPA detected, skipping to Headless"
+                                from = ?current_strategy,
+                                to = ?next,
+                                "Falling back"
                             );
-                            current_strategy = Strategy::Headless;
+                            current_strategy = next;
                             continue;
                         }
-
-                        match next_strategy(
-                            &current_strategy,
-                            &visited,
-                            max_attempts,
-                            attempts,
-                            &FetchError::NetworkError("low quality content".into()),
-                        ) {
-                            Some(next) => {
-                                tracing::warn!(
-                                    url = %params.url,
-                                    from = ?current_strategy,
-                                    to = ?next,
-                                    "Falling back"
-                                );
-                                current_strategy = next;
-                                continue;
-                            }
-                            None => {
-                                let mut result = apply_token_budget(markdown, params.token_budget);
-                                let meta = format!(
-                                    "unable to render JS — tried: {}, none returned usable content",
-                                    visited.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", ")
-                                );
-                                result.push_str(&format!("\n\n[Kaelo: {meta}]"));
-                                return Ok(self.build_response(result, ""));
-                            }
+                        None => {
+                            let mut result = apply_token_budget(markdown, params.token_budget);
+                            let meta = format!(
+                                "unable to render JS — tried: {}, none returned usable content",
+                                visited.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", ")
+                            );
+                            result.push_str(&format!("\n\n[Kaelo: {meta}]"));
+                            return Ok(self.build_response(result, ""));
                         }
                     }
                 }
