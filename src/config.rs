@@ -39,6 +39,12 @@ pub struct Config {
     pub searxng_url: Option<String>,
     pub search_backend: Option<String>,
     pub default_strategy: Option<String>,
+    pub allow_private_networks: bool,
+    pub respect_robots_txt: bool,
+    pub default_extraction_mode: String,
+    pub http_server_enabled: bool,
+    pub http_server_port: u16,
+    pub http_server_host: String,
 }
 
 fn parse_bool(val: &str) -> bool {
@@ -126,6 +132,22 @@ impl Config {
             searxng_url: env::var("KAELO_SEARXNG_URL").ok(),
             search_backend: env::var("KAELO_SEARCH_BACKEND").ok(),
             default_strategy: env::var("KAELO_DEFAULT_STRATEGY").ok(),
+            allow_private_networks: env::var("KAELO_ALLOW_PRIVATE_NETWORKS")
+                .map(|v| parse_bool(&v))
+                .unwrap_or(false),
+            respect_robots_txt: env::var("KAELO_RESPECT_ROBOTS_TXT")
+                .map(|v| parse_bool(&v))
+                .unwrap_or(false),
+            default_extraction_mode: env::var("KAELO_DEFAULT_EXTRACTION_MODE")
+                .unwrap_or_else(|_| "markdown".to_string()),
+            http_server_enabled: env::var("KAELO_HTTP_SERVER_ENABLED")
+                .map(|v| parse_bool(&v))
+                .unwrap_or(false),
+            http_server_port: env::var("KAELO_HTTP_SERVER_PORT")
+                .and_then(|v| v.parse::<u16>().map_err(|_| std::env::VarError::NotPresent))
+                .unwrap_or(8080),
+            http_server_host: env::var("KAELO_HTTP_SERVER_HOST")
+                .unwrap_or_else(|_| "127.0.0.1".to_string()),
         }
     }
 
@@ -147,6 +169,12 @@ impl Config {
             searxng_url: None,
             search_backend: None,
             default_strategy: None,
+            allow_private_networks: false,
+            respect_robots_txt: false,
+            default_extraction_mode: "markdown".to_string(),
+            http_server_enabled: false,
+            http_server_port: 8080,
+            http_server_host: "127.0.0.1".to_string(),
         };
 
         if let Some(v) = value.get("cache_enabled").and_then(|v| v.as_bool()) {
@@ -178,6 +206,30 @@ impl Config {
         }
         if let Some(v) = value.get("default_strategy").and_then(|v| v.as_str()) {
             config.default_strategy = Some(v.to_string());
+        }
+        if let Some(v) = value
+            .get("allow_private_networks")
+            .and_then(|v| v.as_bool())
+        {
+            config.allow_private_networks = v;
+        }
+        if let Some(v) = value.get("respect_robots_txt").and_then(|v| v.as_bool()) {
+            config.respect_robots_txt = v;
+        }
+        if let Some(v) = value
+            .get("default_extraction_mode")
+            .and_then(|v| v.as_str())
+        {
+            config.default_extraction_mode = v.to_string();
+        }
+        if let Some(v) = value.get("http_server_enabled").and_then(|v| v.as_bool()) {
+            config.http_server_enabled = v;
+        }
+        if let Some(v) = value.get("http_server_port").and_then(|v| v.as_integer()) {
+            config.http_server_port = v as u16;
+        }
+        if let Some(v) = value.get("http_server_host").and_then(|v| v.as_str()) {
+            config.http_server_host = v.to_string();
         }
 
         if let Ok(v) = env::var("KAELO_CACHE_ENABLED") {
@@ -215,6 +267,26 @@ impl Config {
         }
         if let Ok(v) = env::var("KAELO_DEFAULT_STRATEGY") {
             config.default_strategy = Some(v);
+        }
+        if let Ok(v) = env::var("KAELO_ALLOW_PRIVATE_NETWORKS") {
+            config.allow_private_networks = parse_bool(&v);
+        }
+        if let Ok(v) = env::var("KAELO_RESPECT_ROBOTS_TXT") {
+            config.respect_robots_txt = parse_bool(&v);
+        }
+        if let Ok(v) = env::var("KAELO_DEFAULT_EXTRACTION_MODE") {
+            config.default_extraction_mode = v;
+        }
+        if let Ok(v) = env::var("KAELO_HTTP_SERVER_ENABLED") {
+            config.http_server_enabled = parse_bool(&v);
+        }
+        if let Ok(v) = env::var("KAELO_HTTP_SERVER_PORT") {
+            if let Ok(parsed) = v.parse::<u16>() {
+                config.http_server_port = parsed;
+            }
+        }
+        if let Ok(v) = env::var("KAELO_HTTP_SERVER_HOST") {
+            config.http_server_host = v;
         }
         let env_auth = parse_auth_from_env();
         if !env_auth.is_empty() {
@@ -470,6 +542,12 @@ mod tests {
         assert_eq!(config.searxng_url, None);
         assert_eq!(config.search_backend, None);
         assert_eq!(config.default_strategy, None);
+        assert!(!config.allow_private_networks);
+        assert!(!config.respect_robots_txt);
+        assert_eq!(config.default_extraction_mode, "markdown");
+        assert!(!config.http_server_enabled);
+        assert_eq!(config.http_server_port, 8080);
+        assert_eq!(config.http_server_host, "127.0.0.1");
         unset_kaelo_vars();
     }
 
@@ -480,6 +558,12 @@ mod tests {
         env::set_var("KAELO_SEARXNG_URL", "https://search.example.com");
         env::set_var("KAELO_SEARCH_BACKEND", "searxng");
         env::set_var("KAELO_DEFAULT_STRATEGY", "tls_mobile");
+        env::set_var("KAELO_ALLOW_PRIVATE_NETWORKS", "true");
+        env::set_var("KAELO_RESPECT_ROBOTS_TXT", "1");
+        env::set_var("KAELO_DEFAULT_EXTRACTION_MODE", "html");
+        env::set_var("KAELO_HTTP_SERVER_ENABLED", "true");
+        env::set_var("KAELO_HTTP_SERVER_PORT", "9090");
+        env::set_var("KAELO_HTTP_SERVER_HOST", "0.0.0.0");
         let config = Config::from_env();
         assert_eq!(
             config.searxng_url,
@@ -487,6 +571,12 @@ mod tests {
         );
         assert_eq!(config.search_backend, Some("searxng".to_string()));
         assert_eq!(config.default_strategy, Some("tls_mobile".to_string()));
+        assert!(config.allow_private_networks);
+        assert!(config.respect_robots_txt);
+        assert_eq!(config.default_extraction_mode, "html");
+        assert!(config.http_server_enabled);
+        assert_eq!(config.http_server_port, 9090);
+        assert_eq!(config.http_server_host, "0.0.0.0");
         unset_kaelo_vars();
     }
 
@@ -497,13 +587,19 @@ mod tests {
         let path = std::path::Path::new("/tmp/kaelo-test-new-fields.toml");
         std::fs::write(
             path,
-            "searxng_url = \"https://my.searx.com\"\nsearch_backend = \"duckduckgo\"\ndefault_strategy = \"http\"",
+            "searxng_url = \"https://my.searx.com\"\nsearch_backend = \"duckduckgo\"\ndefault_strategy = \"http\"\nallow_private_networks = true\nrespect_robots_txt = true\ndefault_extraction_mode = \"html\"\nhttp_server_enabled = true\nhttp_server_port = 9090\nhttp_server_host = \"0.0.0.0\"",
         )
         .unwrap();
         let config = Config::from_file(path).unwrap();
         assert_eq!(config.searxng_url, Some("https://my.searx.com".to_string()));
         assert_eq!(config.search_backend, Some("duckduckgo".to_string()));
         assert_eq!(config.default_strategy, Some("http".to_string()));
+        assert!(config.allow_private_networks);
+        assert!(config.respect_robots_txt);
+        assert_eq!(config.default_extraction_mode, "html");
+        assert!(config.http_server_enabled);
+        assert_eq!(config.http_server_port, 9090);
+        assert_eq!(config.http_server_host, "0.0.0.0");
         std::fs::remove_file(path).ok();
         unset_kaelo_vars();
     }
