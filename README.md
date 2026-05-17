@@ -44,10 +44,10 @@ Agent requests URL
        │
        ▼
 ┌──────────────┐     ┌─────────────────────────────────┐
-│   Router     │────▶│  Route Cache (SQLite)            │
-│              │     │  reddit.com → TLS mobile (1.5s)  │
-│              │     │  github.com → HTTP simple (0.3s) │
-│              │     │  bloomberg.com → headless (4.8s) │
+│   Router     │────▶│  Route Cache (SQLite)           │
+│              │     │  reddit.com → TLS mobile (1.5s) │
+│              │     │  github.com → HTTP simple (0.3s)│
+│              │     │  bloomberg.com → headless (4.8s)│
 └──────┬───────┘     └─────────────────────────────────┘
        │
        │ Known? → Use cached strategy
