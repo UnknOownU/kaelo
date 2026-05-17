@@ -19,8 +19,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start MCP server (stdio transport)
-    Serve,
+    /// Start MCP server (stdio transport by default)
+    Serve {
+        /// Enable HTTP transport instead of stdio
+        #[arg(long)]
+        http: bool,
+        /// Port for HTTP server (default: 8080)
+        #[arg(long, default_value = "8080")]
+        port: u16,
+        /// Host bind address for HTTP server (default: 127.0.0.1)
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+    },
     /// Cache management
     Cache {
         #[command(subcommand)]
@@ -48,6 +58,8 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Run health checks on the Kaelo installation
+    Doctor,
 }
 
 #[derive(Subcommand)]
@@ -135,7 +147,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Serve => {
+        Commands::Serve { http, port, host } => {
             let config = kaelo::config::Config::load();
             let storage = kaelo::storage::Storage::open(&config.db_path.to_string_lossy())?;
             let server = kaelo::mcp::KaeloServer::with_config(
@@ -168,27 +180,30 @@ async fn main() -> anyhow::Result<()> {
                             }
                         }
                     });
-                    // Write cache AFTER spawning (don't block on it)
                     if let Err(e) = kaelo::update::write_check_cache(&cache_path) {
                         tracing::debug!("Failed to write update cache: {e}");
                     }
                 }
             }
 
-            tokio::select! {
-                result = kaelo::mcp::server::serve_stdio(server) => {
-                    result?;
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    tracing::info!("Received Ctrl+C, shutting down gracefully...");
-                    let cleanup = async {
-                        kaelo::fetch::backends::shutdown_browser_pool().await;
-                    };
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(5),
-                        cleanup,
-                    ).await;
-                    tracing::info!("Shutdown complete.");
+            if http {
+                serve_http(server, &host, port).await?;
+            } else {
+                tokio::select! {
+                    result = kaelo::mcp::server::serve_stdio(server) => {
+                        result?;
+                    }
+                    _ = tokio::signal::ctrl_c() => {
+                        tracing::info!("Received Ctrl+C, shutting down gracefully...");
+                        let cleanup = async {
+                            kaelo::fetch::backends::shutdown_browser_pool().await;
+                        };
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(5),
+                            cleanup,
+                        ).await;
+                        tracing::info!("Shutdown complete.");
+                    }
                 }
             }
         }
@@ -310,17 +325,123 @@ async fn main() -> anyhow::Result<()> {
             println!("  Database: {:?}", config.db_path);
             println!("  Log level: {}", config.log_level);
             println!();
-            println!("MCP Server Configuration (for OpenCode/Claude Code):");
-            println!("  Add to your MCP config:");
-            println!("  {{");
-            println!("    \"mcpServers\": {{");
-            println!("      \"kaelo\": {{");
-            println!("        \"command\": \"kaelo\",");
-            println!("        \"args\": [\"serve\"]");
-            println!("      }}");
-            println!("    }}");
-            println!("  }}");
+
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+
+            struct Client {
+                name: &'static str,
+                config_path: std::path::PathBuf,
+                config_json: &'static str,
+            }
+
+            let claude_config = if cfg!(target_os = "macos") {
+                std::path::PathBuf::from(&home)
+                    .join("Library/Application Support/Claude/claude_desktop_config.json")
+            } else {
+                std::path::PathBuf::from(&home).join(".config/Claude/claude_desktop_config.json")
+            };
+
+            let clients = [
+                Client {
+                    name: "Claude Desktop",
+                    config_path: claude_config,
+                    config_json: r#"{
+  "mcpServers": {
+    "kaelo": {
+      "command": "kaelo",
+      "args": ["serve"]
+    }
+  }
+}"#,
+                },
+                Client {
+                    name: "Cursor",
+                    config_path: std::path::PathBuf::from(&home).join(".cursor/mcp.json"),
+                    config_json: r#"{
+  "mcpServers": {
+    "kaelo": {
+      "command": "kaelo",
+      "args": ["serve"]
+    }
+  }
+}"#,
+                },
+                Client {
+                    name: "Windsurf",
+                    config_path: std::path::PathBuf::from(&home).join(".windsurf/mcp.json"),
+                    config_json: r#"{
+  "mcpServers": {
+    "kaelo": {
+      "command": "kaelo",
+      "args": ["serve"]
+    }
+  }
+}"#,
+                },
+                Client {
+                    name: "OpenCode",
+                    config_path: std::path::PathBuf::from("opencode.json"),
+                    config_json: r#"{
+  "mcp": {
+    "kaelo": {
+      "type": "local",
+      "command": ["kaelo"],
+      "enabled": true
+    }
+  }
+}"#,
+                },
+                Client {
+                    name: "Zed",
+                    config_path: std::path::PathBuf::from(&home).join(".config/zed/settings.json"),
+                    config_json: r#"// Add to the "mcp" section of your settings.json:
+{
+  "mcp": {
+    "servers": {
+      "kaelo": {
+        "command": "kaelo",
+        "args": ["serve"]
+      }
+    }
+  }
+}"#,
+                },
+            ];
+
+            println!("MCP Client Detection:");
+            let mut detected_count = 0;
+            for client in &clients {
+                let exists = client.config_path.exists();
+                let status = if exists { "\u{2713}" } else { " " };
+                println!(
+                    "  [{status}] {:20} {}",
+                    client.name,
+                    client.config_path.display()
+                );
+                if exists {
+                    detected_count += 1;
+                }
+            }
+            println!("  ({}/{} clients detected)", detected_count, clients.len());
             println!();
+
+            println!("MCP Server Configs (copy the block for your client):\n");
+
+            for client in &clients {
+                let marker = if client.config_path.exists() {
+                    "\u{2713}"
+                } else {
+                    " "
+                };
+                println!(
+                    "[{marker}] {} — {}",
+                    client.name,
+                    client.config_path.display()
+                );
+                println!("{}", client.config_json);
+                println!();
+            }
+
             println!("Environment Variables:");
             println!("  KAELO_CACHE_ENABLED   - Enable/disable cache (default: true)");
             println!("  KAELO_CACHE_MAX_SIZE  - Max cache size in bytes (default: 52428800)");
@@ -508,6 +629,286 @@ async fn main() -> anyhow::Result<()> {
                     eprintln!("Unable to check for updates: {e}");
                     std::process::exit(1);
                 }
+            }
+        }
+        Commands::Doctor => {
+            let mut all_ok = true;
+
+            let has_chromium = std::process::Command::new("which")
+                .arg("chromium")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            let has_chrome = std::process::Command::new("which")
+                .arg("google-chrome")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            let has_chrome_mac = std::process::Command::new("which")
+                .arg("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+
+            if has_chromium || has_chrome || has_chrome_mac {
+                let name = if has_chromium {
+                    "chromium"
+                } else {
+                    "google-chrome"
+                };
+                println!("\u{2713} Chromium/Chrome installed ({name})");
+            } else {
+                println!("\u{2717} Chromium/Chrome not found");
+                all_ok = false;
+            }
+
+            let config = kaelo::config::Config::load();
+            match kaelo::storage::Storage::open(&config.db_path.to_string_lossy()) {
+                Ok(storage) => {
+                    let route_cache = kaelo::storage::route_cache::RouteCache::new(&storage);
+                    match route_cache.count_entries() {
+                        Ok(count) => {
+                            println!(
+                                "\u{2713} SQLite accessible ({}, {} route entries)",
+                                config.db_path.display(),
+                                count
+                            );
+                        }
+                        Err(e) => {
+                            println!("\u{2717} SQLite query failed: {e}");
+                            all_ok = false;
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("\u{2717} SQLite not accessible: {e}");
+                    all_ok = false;
+                }
+            }
+
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            let config_path = std::path::PathBuf::from(&home)
+                .join(".config")
+                .join("kaelo")
+                .join("kaelo.toml");
+            match std::fs::read_to_string(&config_path) {
+                Ok(_) => {
+                    println!("\u{2713} Config readable ({})", config_path.display());
+                }
+                Err(_) => {
+                    println!(
+                        "\u{2713} Config not found ({}) — using defaults",
+                        config_path.display()
+                    );
+                }
+            }
+
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                kaelo::fetch::backends::HttpSimple::new()?.fetch(kaelo::types::FetchRequest {
+                    url: "https://example.com".to_string(),
+                    headers: std::collections::HashMap::new(),
+                    timeout: std::time::Duration::from_secs(5),
+                    follow_redirects: true,
+                }),
+            )
+            .await
+            {
+                Ok(Ok(resp)) if (200..300).contains(&resp.status) => {
+                    println!("\u{2713} Network OK (example.com returned {})", resp.status);
+                }
+                Ok(Ok(resp)) => {
+                    println!(
+                        "\u{2717} Network issue (example.com returned {})",
+                        resp.status
+                    );
+                    all_ok = false;
+                }
+                Ok(Err(e)) => {
+                    println!("\u{2717} Network failed: {e:?}");
+                    all_ok = false;
+                }
+                Err(_) => {
+                    println!("\u{2717} Network timeout (5s)");
+                    all_ok = false;
+                }
+            }
+
+            if all_ok {
+                println!("\nAll checks passed. Kaelo is healthy.");
+            } else {
+                println!("\nSome checks failed. See above for details.");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn serve_http(server: kaelo::mcp::KaeloServer, host: &str, port: u16) -> anyhow::Result<()> {
+    use bytes::Bytes;
+    use http_body_util::{BodyExt, Full};
+    use hyper::body::Incoming;
+    use hyper::server::conn::http1;
+    use hyper::service::service_fn;
+    use hyper::{Method, Request, Response, StatusCode};
+    use rmcp::transport::streamable_http_server::{
+        session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+    };
+    use std::convert::Infallible;
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+    use tower_service::Service;
+
+    type BoxBody = http_body_util::combinators::BoxBody<Bytes, Infallible>;
+
+    fn full_body(data: impl Into<Bytes>) -> BoxBody {
+        Full::new(data.into()).map_err(|_| unreachable!()).boxed()
+    }
+
+    fn add_cors_headers<B>(mut response: Response<B>) -> Response<B> {
+        let headers = response.headers_mut();
+        headers.insert("access-control-allow-origin", "*".parse().unwrap());
+        headers.insert(
+            "access-control-allow-methods",
+            "POST, GET, OPTIONS".parse().unwrap(),
+        );
+        headers.insert(
+            "access-control-allow-headers",
+            "Content-Type".parse().unwrap(),
+        );
+        response
+    }
+
+    fn cors_preflight() -> Response<BoxBody> {
+        let mut resp = Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(full_body(Bytes::new()))
+            .unwrap();
+        let headers = resp.headers_mut();
+        headers.insert("access-control-allow-origin", "*".parse().unwrap());
+        headers.insert(
+            "access-control-allow-methods",
+            "POST, GET, OPTIONS".parse().unwrap(),
+        );
+        headers.insert(
+            "access-control-allow-headers",
+            "Content-Type".parse().unwrap(),
+        );
+        headers.insert("access-control-max-age", "86400".parse().unwrap());
+        resp
+    }
+
+    fn health_response() -> Response<BoxBody> {
+        let body = full_body(Bytes::from(
+            serde_json::json!({
+                "status": "ok",
+                "version": env!("CARGO_PKG_VERSION")
+            })
+            .to_string(),
+        ));
+        add_cors_headers(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(body)
+                .unwrap(),
+        )
+    }
+
+    fn not_found() -> Response<BoxBody> {
+        add_cors_headers(
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(full_body(Bytes::from("not found")))
+                .unwrap(),
+        )
+    }
+
+    let ct = CancellationToken::new();
+    let ct_child = ct.child_token();
+
+    let allowed_hosts = vec![
+        "localhost".into(),
+        "127.0.0.1".into(),
+        "::1".into(),
+        host.to_string(),
+        format!("{host}:{port}"),
+    ];
+
+    let mcp_config = StreamableHttpServerConfig::default()
+        .with_stateful_mode(false)
+        .with_json_response(true)
+        .with_allowed_hosts(allowed_hosts)
+        .with_cancellation_token(ct_child);
+
+    let mcp_service: StreamableHttpService<kaelo::mcp::KaeloServer, LocalSessionManager> =
+        StreamableHttpService::new(
+            move || Ok(server.clone()),
+            Arc::new(LocalSessionManager::default()),
+            mcp_config,
+        );
+    let mcp_service = Arc::new(tokio::sync::Mutex::new(mcp_service));
+
+    let addr = format!("{host}:{port}");
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    tracing::info!("Kaelo HTTP server listening on http://{addr}");
+    tracing::info!("  GET  /health — health check");
+    tracing::info!("  POST /mcp    — MCP JSON-RPC endpoint");
+
+    let shutdown_ct = ct.clone();
+    let shutdown_signal = tokio::signal::ctrl_c();
+
+    tokio::pin!(shutdown_signal);
+
+    loop {
+        tokio::select! {
+            accept_result = listener.accept() => {
+                let (stream, _) = accept_result?;
+                let mcp_service = mcp_service.clone();
+                let io = hyper_util::rt::TokioIo::new(stream);
+
+                tokio::spawn(async move {
+                    let service = service_fn(move |req: Request<Incoming>| {
+                        let mcp_service = mcp_service.clone();
+                        async move {
+                            let response: Response<BoxBody> = match (req.method(), req.uri().path()) {
+                                (&Method::OPTIONS, _) => cors_preflight(),
+                                (&Method::GET, "/health") => health_response(),
+                                (&Method::POST, "/mcp") | (&Method::GET, "/mcp") | (&Method::DELETE, "/mcp") => {
+                                    let mut svc = mcp_service.lock().await;
+                                    let future = svc.call(req);
+                                    drop(svc);
+                                    let resp = future.await.map_err(|_| {
+                                        std::io::Error::other("mcp service error")
+                                    })?;
+                                    add_cors_headers(resp)
+                                }
+                                _ => not_found(),
+                            };
+                            Ok::<_, std::io::Error>(response)
+                        }
+                    });
+
+                    let _ = http1::Builder::new()
+                        .serve_connection(io, service)
+                        .await;
+                });
+            }
+            _ = &mut shutdown_signal => {
+                tracing::info!("Received Ctrl+C, shutting down HTTP server...");
+                shutdown_ct.cancel();
+                let cleanup = kaelo::fetch::backends::shutdown_browser_pool();
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), cleanup).await;
+                tracing::info!("Shutdown complete.");
+                break;
             }
         }
     }
