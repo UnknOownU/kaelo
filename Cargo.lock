@@ -1480,7 +1480,7 @@ dependencies = [
 
 [[package]]
 name = "kaelo-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1496,7 +1496,7 @@ dependencies = [
 
 [[package]]
 name = "kaelo-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1517,7 +1517,7 @@ dependencies = [
 
 [[package]]
 name = "kaelo-fetch"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chromiumoxide",
@@ -1534,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "kaelo-mcp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "kaelo-core",

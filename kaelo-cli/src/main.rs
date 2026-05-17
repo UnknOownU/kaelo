@@ -87,7 +87,11 @@ fn init_tracing() {
 
     let log_path = log_dir.join("kaelo.log");
 
-    let file = match std::fs::File::create(&log_path) {
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
         Ok(f) => f,
         Err(e) => {
             eprintln!(
