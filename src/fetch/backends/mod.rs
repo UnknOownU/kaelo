@@ -1,5 +1,6 @@
 pub mod http_simple;
 pub mod public_api;
+pub mod youtube;
 
 #[cfg(feature = "headless")]
 pub mod browser_pool;
@@ -12,6 +13,7 @@ pub mod tls_impersonation;
 
 pub use http_simple::HttpSimple;
 pub use public_api::PublicApiBackend;
+pub use youtube::YouTubeBackend;
 
 #[cfg(feature = "headless")]
 pub use browser_pool::BrowserPool;
