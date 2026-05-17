@@ -14,7 +14,7 @@ const WAIT_FOR_CONTENT_JS: &str = r#"(function() {
   if (!body) return Promise.resolve(false);
   if (body.innerText.trim().length > 100 && body.children.length > 1) return Promise.resolve(true);
   return new Promise(function(resolve) {
-    var timeout = setTimeout(function() { resolve(false); }, 8000);
+    var timeout = setTimeout(function() { resolve(false); }, 15000);
     var debounce = null;
     var observer = new MutationObserver(function() {
       clearTimeout(debounce);
@@ -79,7 +79,7 @@ impl HeadlessBrowser {
                 .await
                 .map_err(|e| FetchError::BrowserError(format!("navigation failed: {e}")))?;
 
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
             let _ = page
                 .evaluate(r#"document.querySelector('[aria-label="Accept"], .accept-cookies, #accept-cookies, button[mode="primary"]')?.click()"#)
