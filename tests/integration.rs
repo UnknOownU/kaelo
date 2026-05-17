@@ -8,8 +8,8 @@ use std::io::{BufRead, BufReader, Read as _, Write as _};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Duration;
 
-use kaelo::storage::Storage;
 use kaelo::mcp::KaeloServer;
+use kaelo::storage::Storage;
 
 fn find_kaelo_binary() -> String {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set");

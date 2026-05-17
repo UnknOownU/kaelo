@@ -11,16 +11,12 @@ fn benchmark_extraction(c: &mut Criterion) {
 
     let news_html = include_str!("../tests/fixtures/news_article.html");
     c.bench_function("extract_news_article", |b| {
-        b.iter(|| {
-            kaelo::extraction::extract(news_html, "https://example.com/news", "text/html")
-        })
+        b.iter(|| kaelo::extraction::extract(news_html, "https://example.com/news", "text/html"))
     });
 
     let docs_html = include_str!("../tests/fixtures/docs_page.html");
     c.bench_function("extract_docs_page", |b| {
-        b.iter(|| {
-            kaelo::extraction::extract(docs_html, "https://example.com/docs", "text/html")
-        })
+        b.iter(|| kaelo::extraction::extract(docs_html, "https://example.com/docs", "text/html"))
     });
 }
 

@@ -3,10 +3,11 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::Result;
 use crate::extraction;
 use crate::extraction::quality::is_content_valuable;
 use crate::extraction::spa_detect;
+use crate::fetch::backend::FetchBackend;
+use crate::fetch::backends::HttpSimple;
 use crate::router::fallback::{classify_error, next_strategy, ErrorClass};
 use crate::search::ddg::DuckDuckGoBackend;
 use crate::search::searxng::SearXngBackend;
@@ -16,8 +17,7 @@ use crate::storage::route_cache::{FetchResult, RouteCache};
 use crate::storage::Storage;
 use crate::types::{FetchError, FetchRequest, FetchResponse, Strategy};
 use crate::update;
-use crate::fetch::backend::FetchBackend;
-use crate::fetch::backends::HttpSimple;
+use anyhow::Result;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content};
 use rmcp::{tool, tool_handler, tool_router, transport::stdio, ErrorData, ServiceExt};
@@ -749,14 +749,13 @@ impl KaeloServer {
         let content_cache = ContentCache::new(&storage);
 
         let route_count = route_cache.count_entries().unwrap_or(0);
-        let stats =
-            content_cache
-                .stats()
-                .unwrap_or(crate::storage::content_cache::CacheStats {
-                    entry_count: 0,
-                    total_size_bytes: 0,
-                    top_domains: vec![],
-                });
+        let stats = content_cache
+            .stats()
+            .unwrap_or(crate::storage::content_cache::CacheStats {
+                entry_count: 0,
+                total_size_bytes: 0,
+                top_domains: vec![],
+            });
 
         format!(
             "Route cache: {} entries\nContent cache: {} entries ({} bytes)",

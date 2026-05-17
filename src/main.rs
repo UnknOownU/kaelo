@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
-use kaelo::update;
 use kaelo::fetch::backend::FetchBackend;
+use kaelo::update;
 use std::path::PathBuf;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;

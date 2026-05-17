@@ -14,10 +14,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::types::FetchError;
 use ::chromiumoxide::browser::{Browser, BrowserConfig};
 use ::chromiumoxide::Page;
 use futures::StreamExt;
-use crate::types::FetchError;
 use tokio::sync::Mutex;
 
 const SESSION_TIMEOUT: Duration = Duration::from_secs(5 * 60);

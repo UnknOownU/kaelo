@@ -5,9 +5,9 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use kaelo::types::{FetchError, FetchRequest, Strategy};
 use kaelo::fetch::backend::FetchBackend;
 use kaelo::fetch::backends::HttpSimple;
+use kaelo::types::{FetchError, FetchRequest, Strategy};
 
 const HTML_ARTICLE: &str = r#"<!DOCTYPE html>
 <html lang="en">

@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use kaelo::types::FetchRequest;
 use kaelo::fetch::backends::HeadlessBrowser;
+use kaelo::types::FetchRequest;
 
 fn make_request(url: &str, timeout: Duration) -> FetchRequest {
     FetchRequest {

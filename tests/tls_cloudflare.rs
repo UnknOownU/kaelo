@@ -12,9 +12,9 @@ mod tls_cloudflare {
     use std::collections::HashMap;
     use std::time::Duration;
 
-    use kaelo::types::{FetchRequest, Strategy};
     use kaelo::fetch::backend::FetchBackend;
     use kaelo::fetch::backends::TlsImpersonation;
+    use kaelo::types::{FetchRequest, Strategy};
 
     fn make_request(url: &str) -> FetchRequest {
         FetchRequest {
