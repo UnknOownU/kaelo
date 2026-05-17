@@ -15,6 +15,7 @@ use kaelo_core::storage::content_cache::ContentCache;
 use kaelo_core::storage::route_cache::{FetchResult, RouteCache};
 use kaelo_core::storage::Storage;
 use kaelo_core::types::{FetchError, FetchRequest, FetchResponse, Strategy};
+use kaelo_core::update;
 use kaelo_fetch::backend::FetchBackend;
 use kaelo_fetch::backends::HttpSimple;
 use rmcp::handler::server::wrapper::Parameters;
@@ -25,6 +26,7 @@ struct KaeloState {
     storage: Mutex<Storage>,
     searxng_url: Option<String>,
     search_backend: Option<String>,
+    pending_update: Mutex<Option<String>>,
 }
 
 impl fmt::Debug for KaeloState {
@@ -48,14 +50,53 @@ impl KaeloServer {
         searxng_url: Option<String>,
         search_backend: Option<String>,
     ) -> Self {
-        let state = KaeloState {
+        let state = Arc::new(KaeloState {
             storage: Mutex::new(storage),
             searxng_url,
             search_backend,
-        };
-        Self {
-            state: Arc::new(state),
+            pending_update: Mutex::new(None),
+        });
+
+        // Spawn background update check (fire-and-forget)
+        let update_state = state.clone();
+        let handle = tokio::runtime::Handle::try_current();
+        if let Ok(handle) = handle {
+            handle.spawn(async move {
+                match update::check_for_update().await {
+                    Ok(Some(info)) => {
+                        let msg = format!(
+                            "\n\n[Kaelo: v{} → v{} available — restart to update. {}]",
+                            info.current, info.latest, info.release_url
+                        );
+                        if let Ok(mut guard) = update_state.pending_update.lock() {
+                            *guard = Some(msg);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::debug!("Background update check failed: {e}");
+                    }
+                }
+            });
         }
+
+        Self { state }
+    }
+
+    fn get_update_notice(&self) -> Option<String> {
+        self.state
+            .pending_update
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+    }
+
+    fn success_with_notice(&self, text: String) -> CallToolResult {
+        let mut text = text;
+        if let Some(notice) = self.get_update_notice() {
+            text.push_str(&notice);
+        }
+        CallToolResult::success(vec![Content::text(text)])
     }
 }
 
@@ -270,7 +311,7 @@ impl KaeloServer {
             {
                 tracing::info!(url = %params.url, "Cache hit");
                 let result = apply_token_budget(content, params.token_budget);
-                return Ok(CallToolResult::success(vec![Content::text(result)]));
+                return Ok(self.success_with_notice(result));
             }
         }
 
@@ -350,7 +391,7 @@ impl KaeloServer {
                             );
                         }
                         let result = apply_token_budget(markdown, params.token_budget);
-                        return Ok(CallToolResult::success(vec![Content::text(result)]));
+                        return Ok(self.success_with_notice(result));
                     } else {
                         tracing::warn!(
                             url = %params.url,
@@ -392,7 +433,7 @@ impl KaeloServer {
                                     visited.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", ")
                                 );
                                 result.push_str(&warning);
-                                return Ok(CallToolResult::success(vec![Content::text(result)]));
+                                return Ok(self.success_with_notice(result));
                             }
                         }
                     }
@@ -652,7 +693,7 @@ impl KaeloServer {
             }
         }
 
-        Ok(CallToolResult::success(vec![Content::text(combined)]))
+        Ok(self.success_with_notice(combined))
     }
 
     #[tool(name = "ping", description = "Health check — returns pong")]
