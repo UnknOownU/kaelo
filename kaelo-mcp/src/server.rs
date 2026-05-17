@@ -101,7 +101,18 @@ impl KaeloServer {
         if let Some(notice) = self.get_update_notice() {
             contents.push(Content::text(notice));
         }
-        CallToolResult::success(contents)
+        let mut result = CallToolResult::success(contents);
+        if !meta.is_empty() {
+            result.meta = Some(rmcp::model::Meta(
+                serde_json::json!({
+                    "kaelo": meta
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ));
+        }
+        result
     }
 }
 
