@@ -238,19 +238,44 @@ impl BrowserPool {
 
     async fn launch_browser() -> Result<(Browser, chromiumoxide::Handler), FetchError> {
         let ua = pick_user_agent();
-        let config = BrowserConfig::builder()
+        let (width, height) = random_viewport();
+
+        // Fresh per-process user-data-dir. chromiumoxide's default reuses a
+        // single fixed dir (`temp_dir()/chromiumoxide-runner`); on Windows a
+        // previous crashed Chrome leaves `SingletonLock`/lock files behind that
+        // make the next Chrome exit silently (status 21, empty stderr).
+        let user_data_dir =
+            std::env::temp_dir().join(format!("kaelo-chrome-{}", std::process::id()));
+
+        let mut builder = BrowserConfig::builder()
+            // Chrome 132+ deprecates the legacy `--headless`; 149 rejects it
+            // outright in some flows. Force the new headless implementation.
+            .new_headless_mode()
+            .window_size(width, height)
+            .user_data_dir(&user_data_dir)
             .arg("--disable-blink-features=AutomationControlled")
             .arg("--disable-infobars")
-            .arg("--window-size=1920,1080")
-            .arg(format!("--user-agent={ua}"))
-            .build()
-            .map_err(|e| {
-                FetchError::BrowserError(format!("failed to build browser config: {e}"))
-            })?;
+            .arg("--no-default-browser-check")
+            .arg("--disable-gpu")
+            .arg(format!("--user-agent={ua}"));
+
+        // Honour the same `CHROME` env var chromiumoxide's own detection uses,
+        // so users can point at a specific build without touching code.
+        if let Ok(path) = std::env::var("CHROME") {
+            let p = std::path::PathBuf::from(&path);
+            if p.exists() {
+                builder = builder.chrome_executable(p);
+            }
+        }
+
+        let config = builder.build().map_err(|e| {
+            FetchError::BrowserError(format!("failed to build browser config: {e}"))
+        })?;
 
         Browser::launch(config).await.map_err(|e| {
             FetchError::BrowserError(format!(
-                "failed to launch Chrome — is Chromium installed? {e}"
+                "failed to launch Chrome — is Chromium installed? \
+                 set CHROME=<path> or install Chrome. Underlying error: {e}"
             ))
         })
     }
