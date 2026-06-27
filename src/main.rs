@@ -140,6 +140,75 @@ fn init_tracing() {
         .init();
 }
 
+/// Detect Chrome/Chromium across platforms, mirroring chromiumoxide's own
+/// detection order: `$CHROME` env var first, then well-known install paths,
+/// then `which <name>` on Linux. Returns the resolved path if found.
+///
+/// On Windows the previous implementation shelled out to `which`, which does
+/// not exist there, so `doctor` always reported Chrome as missing.
+fn detect_chrome() -> Option<std::path::PathBuf> {
+    // 1. `$CHROME` env var — same priority as chromiumoxide's detection.
+    if let Ok(path) = std::env::var("CHROME") {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 2. Well-known install locations, checked in priority order.
+    let candidates: Vec<PathBuf> = {
+        let mut v: Vec<PathBuf> = Vec::new();
+        #[cfg(windows)]
+        {
+            if let Ok(pf) = std::env::var("ProgramFiles") {
+                v.push(PathBuf::from(&pf).join("Google/Chrome/Application/chrome.exe"));
+            }
+            if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
+                v.push(PathBuf::from(&pf86).join("Google/Chrome/Application/chrome.exe"));
+            }
+            if let Ok(la) = std::env::var("LOCALAPPDATA") {
+                v.push(PathBuf::from(&la).join("Google/Chrome/Application/chrome.exe"));
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            v.push(PathBuf::from(
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            ));
+            v.push(PathBuf::from(
+                "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            ));
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            for name in &[
+                "google-chrome",
+                "google-chrome-stable",
+                "chromium",
+                "chromium-browser",
+            ] {
+                if let Ok(out) = std::process::Command::new("which")
+                    .arg(name)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .output()
+                {
+                    if out.status.success() {
+                        let s = String::from_utf8_lossy(&out.stdout);
+                        let trimmed = s.trim();
+                        if !trimmed.is_empty() {
+                            v.push(PathBuf::from(trimmed));
+                        }
+                    }
+                }
+            }
+        }
+        v
+    };
+
+    candidates.into_iter().find(|p| p.exists())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
@@ -634,38 +703,14 @@ async fn main() -> anyhow::Result<()> {
         Commands::Doctor => {
             let mut all_ok = true;
 
-            let has_chromium = std::process::Command::new("which")
-                .arg("chromium")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            let has_chrome = std::process::Command::new("which")
-                .arg("google-chrome")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            let has_chrome_mac = std::process::Command::new("which")
-                .arg("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-
-            if has_chromium || has_chrome || has_chrome_mac {
-                let name = if has_chromium {
-                    "chromium"
-                } else {
-                    "google-chrome"
-                };
-                println!("\u{2713} Chromium/Chrome installed ({name})");
-            } else {
-                println!("\u{2717} Chromium/Chrome not found");
-                all_ok = false;
+            match detect_chrome() {
+                Some(path) => {
+                    println!("\u{2713} Chromium/Chrome installed ({})", path.display());
+                }
+                None => {
+                    println!("\u{2717} Chromium/Chrome not found");
+                    all_ok = false;
+                }
             }
 
             let config = kaelo::config::Config::load();
