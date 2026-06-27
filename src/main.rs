@@ -156,55 +156,52 @@ fn detect_chrome() -> Option<std::path::PathBuf> {
     }
 
     // 2. Well-known install locations, checked in priority order.
-    let candidates: Vec<PathBuf> = {
-        let mut v: Vec<PathBuf> = Vec::new();
-        #[cfg(windows)]
-        {
-            if let Ok(pf) = std::env::var("ProgramFiles") {
-                v.push(PathBuf::from(&pf).join("Google/Chrome/Application/chrome.exe"));
-            }
-            if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
-                v.push(PathBuf::from(&pf86).join("Google/Chrome/Application/chrome.exe"));
-            }
-            if let Ok(la) = std::env::var("LOCALAPPDATA") {
-                v.push(PathBuf::from(&la).join("Google/Chrome/Application/chrome.exe"));
-            }
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    #[cfg(windows)]
+    {
+        if let Ok(pf) = std::env::var("ProgramFiles") {
+            candidates.push(PathBuf::from(&pf).join("Google/Chrome/Application/chrome.exe"));
         }
-        #[cfg(target_os = "macos")]
-        {
-            v.push(PathBuf::from(
-                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            ));
-            v.push(PathBuf::from(
-                "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            ));
+        if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
+            candidates.push(PathBuf::from(&pf86).join("Google/Chrome/Application/chrome.exe"));
         }
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            for name in &[
-                "google-chrome",
-                "google-chrome-stable",
-                "chromium",
-                "chromium-browser",
-            ] {
-                if let Ok(out) = std::process::Command::new("which")
-                    .arg(name)
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::null())
-                    .output()
-                {
-                    if out.status.success() {
-                        let s = String::from_utf8_lossy(&out.stdout);
-                        let trimmed = s.trim();
-                        if !trimmed.is_empty() {
-                            v.push(PathBuf::from(trimmed));
-                        }
+        if let Ok(la) = std::env::var("LOCALAPPDATA") {
+            candidates.push(PathBuf::from(&la).join("Google/Chrome/Application/chrome.exe"));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        candidates.push(PathBuf::from(
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        ));
+        candidates.push(PathBuf::from(
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ));
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        for name in &[
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+        ] {
+            if let Ok(out) = std::process::Command::new("which")
+                .arg(name)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .output()
+            {
+                if out.status.success() {
+                    let s = String::from_utf8_lossy(&out.stdout);
+                    let trimmed = s.trim();
+                    if !trimmed.is_empty() {
+                        candidates.push(PathBuf::from(trimmed));
                     }
                 }
             }
         }
-        v
-    };
+    }
 
     candidates.into_iter().find(|p| p.exists())
 }
