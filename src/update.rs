@@ -277,9 +277,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn test_platform_target() {
         let target = platform_target().expect("platform_target should succeed on supported OS");
-        // Must match one of the 4 supported triples.
+        // Must match one of the 4 supported triples (mirrors release.yml matrix).
         let supported = [
             "aarch64-apple-darwin",
             "x86_64-apple-darwin",
@@ -289,6 +290,19 @@ mod tests {
         assert!(
             supported.contains(&target.as_str()),
             "Unsupported target: {target}"
+        );
+    }
+
+    /// Documents that `kaelo update` intentionally does not wire auto-update
+    /// for Windows yet — there are no Windows artifacts in the release matrix
+    /// (`.github/workflows/release.yml`). The desired product behaviour on
+    /// Windows is a clean `Err` from `platform_target`, not a 404 mid-download.
+    #[test]
+    #[cfg(windows)]
+    fn test_platform_target_unsupported_on_windows() {
+        assert!(
+            platform_target().is_err(),
+            "platform_target should bail on Windows until Windows release artifacts exist"
         );
     }
 
