@@ -505,9 +505,9 @@ mod tests {
     fn test_from_file_overrides_defaults() {
         let _lock = ENV_LOCK.lock().unwrap();
         unset_kaelo_vars();
-        let path = std::path::Path::new("/tmp/kaelo-test-from-file.toml");
-        std::fs::write(path, "cache_max_size = 999999\ncache_ttl = 7200").unwrap();
-        let config = Config::from_file(path).unwrap();
+        let path = std::env::temp_dir().join("kaelo-test-from-file.toml");
+        std::fs::write(&path, "cache_max_size = 999999\ncache_ttl = 7200").unwrap();
+        let config = Config::from_file(&path).unwrap();
         assert_eq!(config.cache_max_size, 999999);
         assert_eq!(config.cache_ttl, 7200);
         assert_eq!(config.cache_max_entry, 102_400);
@@ -520,9 +520,9 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap();
         unset_kaelo_vars();
         env::set_var("KAELO_CACHE_MAX_SIZE", "12345678");
-        let path = std::path::Path::new("/tmp/kaelo-test-env-override.toml");
-        std::fs::write(path, "cache_max_size = 999999").unwrap();
-        let config = Config::from_file(path).unwrap();
+        let path = std::env::temp_dir().join("kaelo-test-env-override.toml");
+        std::fs::write(&path, "cache_max_size = 999999").unwrap();
+        let config = Config::from_file(&path).unwrap();
         assert_eq!(config.cache_max_size, 12345678);
         std::fs::remove_file(path).ok();
         unset_kaelo_vars();
@@ -584,13 +584,13 @@ mod tests {
     fn test_new_fields_from_toml() {
         let _lock = ENV_LOCK.lock().unwrap();
         unset_kaelo_vars();
-        let path = std::path::Path::new("/tmp/kaelo-test-new-fields.toml");
+        let path = std::env::temp_dir().join("kaelo-test-new-fields.toml");
         std::fs::write(
-            path,
+            &path,
             "searxng_url = \"https://my.searx.com\"\nsearch_backend = \"duckduckgo\"\ndefault_strategy = \"http\"\nallow_private_networks = true\nrespect_robots_txt = true\ndefault_extraction_mode = \"html\"\nhttp_server_enabled = true\nhttp_server_port = 9090\nhttp_server_host = \"0.0.0.0\"",
         )
         .unwrap();
-        let config = Config::from_file(path).unwrap();
+        let config = Config::from_file(&path).unwrap();
         assert_eq!(config.searxng_url, Some("https://my.searx.com".to_string()));
         assert_eq!(config.search_backend, Some("duckduckgo".to_string()));
         assert_eq!(config.default_strategy, Some("http".to_string()));
@@ -609,9 +609,9 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap();
         unset_kaelo_vars();
         env::set_var("KAELO_SEARXNG_URL", "https://env.example.com");
-        let path = std::path::Path::new("/tmp/kaelo-test-env-toml.toml");
-        std::fs::write(path, "searxng_url = \"https://file.example.com\"").unwrap();
-        let config = Config::from_file(path).unwrap();
+        let path = std::env::temp_dir().join("kaelo-test-env-toml.toml");
+        std::fs::write(&path, "searxng_url = \"https://file.example.com\"").unwrap();
+        let config = Config::from_file(&path).unwrap();
         assert_eq!(
             config.searxng_url,
             Some("https://env.example.com".to_string())
